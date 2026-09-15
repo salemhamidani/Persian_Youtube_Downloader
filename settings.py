@@ -17,6 +17,10 @@ class SettingsManager:
             "retries": 5,
             "use_custom_cookie": False,
             "custom_cookie_path": "",
+            "proxy_enabled": False,
+            "proxy_host": "",
+            "proxy_port": 8080,
+            "proxy_proto": "http",
         }
         self.data = self.load()
 

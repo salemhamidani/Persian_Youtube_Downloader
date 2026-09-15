@@ -66,6 +66,7 @@ class YouTubeDownloader:
         retries: int = 5,
         quiet: bool = False,
         verbose: bool = False,
+        proxy: Optional[str] = None,
     ) -> dict:
         """ساخت پارامترهای پایه برای yt-dlp — با تنظیمات سرعت بالا"""
 
@@ -145,6 +146,11 @@ class YouTubeDownloader:
             if not quiet:
                 print(f"[debug] cookiesfrombrowser set to: {browser_name}")
 
+        if proxy:
+            opts["proxy"] = proxy
+            if not quiet:
+                print(f"[debug] proxy set to: {proxy}")
+
         return opts
 
     @staticmethod
@@ -162,11 +168,12 @@ class YouTubeDownloader:
         retries: int = 5,
         log_callback: Optional[Callable[[str], None]] = None,
         verbose: bool = False,
+        proxy: Optional[str] = None,
     ) -> dict:
         """استخراج لیست فرمت‌های موجود"""
         self._reset()
         opts = self._build_base_opts(
-            cookie_browser, cookie_file, retries, quiet=True, verbose=verbose
+            cookie_browser, cookie_file, retries, quiet=True, verbose=verbose, proxy=proxy
         )
         opts["skip_download"] = True
 
@@ -197,10 +204,11 @@ class YouTubeDownloader:
         cookie_file: Optional[str] = None,
         retries: int = 5,
         log_callback: Optional[Callable[[str], None]] = None,
+        proxy: Optional[str] = None,
     ) -> dict:
         """استخراج لیست ویدئوهای یک پلی‌لیست (سریع و بدون دانلود)"""
         self._reset()
-        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=True)
+        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=True, proxy=proxy)
         opts["skip_download"] = True
         opts["extract_flat"] = "in_playlist"  # فقط اطلاعات سطحی هر ویدئو (سریع)
         opts["logger"] = _YdlLogger(log_callback)
@@ -253,10 +261,11 @@ class YouTubeDownloader:
         progress_callback: Optional[Callable[[dict], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         postprocessor_callback: Optional[Callable[[str], None]] = None,
+        proxy: Optional[str] = None,
     ):
         """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
         self._reset()
-        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=False)
+        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=False, proxy=proxy)
 
         outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")
         opts["outtmpl"] = outtmpl

@@ -43,6 +43,20 @@ def is_playlist_url(url: str) -> bool:
     return "/playlist" in u or "list=" in u
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    """آیتم جدول با مرتب‌سازی عددی (برای ستون‌هایی مثل سایز/حجم)"""
+
+    def __lt__(self, other):
+        a = self.data(Qt.ItemDataRole.UserRole)
+        b = other.data(Qt.ItemDataRole.UserRole)
+        if a is not None and b is not None:
+            try:
+                return float(a) < float(b)
+            except (TypeError, ValueError):
+                pass
+        return super().__lt__(other)
+
+
 # گزینه‌های کیفیت برای دانلود پلی‌لیست: (برچسب، selector یت-dlp، حداکثر ارتفاع یا 'audio')
 QUALITY_OPTIONS = [
     ("بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best", None),
@@ -87,11 +101,13 @@ class MainWindow(QMainWindow):
         self.playlist_items = []
         self.playlist_sizes = {}
         self._size_gen = 0
+        self._workers = []
 
         self._build_ui()
         self._load_settings_into_ui()
         self._detect_clipboard_url()
         self._detect_browsers()
+        self._check_external_tools()
 
     # ================= ساخت UI =================
     def _build_ui(self):
@@ -160,6 +176,26 @@ class MainWindow(QMainWindow):
         cookie_layout.addWidget(self.btn_browse_cookie, 1, 3)
 
         main_layout.addWidget(cookie_group)
+
+        # ---- گروه پراکسی ----
+        proxy_group = QGroupBox("🌐 پراکسی (Proxy)")
+        proxy_layout = QHBoxLayout(proxy_group)
+        self.proxy_check = QCheckBox("فعال")
+        self.proxy_proto = QComboBox()
+        self.proxy_proto.addItems(["http", "socks5", "socks4", "https"])
+        self.proxy_host = QLineEdit()
+        self.proxy_host.setPlaceholderText("میزبان (مثلاً 127.0.0.1)")
+        self.proxy_port = QSpinBox()
+        self.proxy_port.setRange(1, 65535)
+        self.proxy_port.setValue(8080)
+        proxy_layout.addWidget(self.proxy_check)
+        proxy_layout.addWidget(QLabel("نوع:"))
+        proxy_layout.addWidget(self.proxy_proto)
+        proxy_layout.addWidget(QLabel("میزبان:"))
+        proxy_layout.addWidget(self.proxy_host, 1)
+        proxy_layout.addWidget(QLabel("پورت:"))
+        proxy_layout.addWidget(self.proxy_port)
+        main_layout.addWidget(proxy_group)
 
         # ---- گروه فرمت‌ها ----
         format_group = QGroupBox("۳) فرمت‌های موجود")
@@ -399,6 +435,14 @@ class MainWindow(QMainWindow):
             self.radio_file.setChecked(True)
             self.cookie_file_input.setText(self.settings.get("custom_cookie_path", ""))
 
+        self.proxy_check.setChecked(bool(self.settings.get("proxy_enabled", False)))
+        self.proxy_host.setText(self.settings.get("proxy_host", ""))
+        self.proxy_port.setValue(int(self.settings.get("proxy_port", 8080)))
+        proto = self.settings.get("proxy_proto", "http")
+        idx = self.proxy_proto.findText(proto)
+        if idx >= 0:
+            self.proxy_proto.setCurrentIndex(idx)
+
     # ================= Clipboard =================
     def _detect_clipboard_url(self):
         try:
@@ -445,6 +489,28 @@ class MainWindow(QMainWindow):
                 "لطفاً از فایل cookies.txt استفاده کنید."
             )
             self.radio_file.setChecked(True)
+
+    def _check_external_tools(self):
+        """بررسی وجود ffmpeg و aria2c در زمان اجرا"""
+        import shutil
+        ffmpeg = shutil.which("ffmpeg")
+        aria2c = shutil.which("aria2c")
+        if not ffmpeg:
+            self._append_log(
+                "[warning] ⚠️ FFmpeg یافت نشد — دانلود صدا (mp3) و ادغام ویدئو+صدا کار نمی‌کند."
+            )
+            QMessageBox.warning(
+                self, "FFmpeg یافت نشد",
+                "FFmpeg روی سیستم نصب نیست.\n\n"
+                "برای دانلود صدا (mp3) و ادغام ویدئو+صدا به FFmpeg نیاز دارید.\n\n"
+                "نصب در ویندوز:\nwinget install Gyan.FFmpeg",
+            )
+        else:
+            self._append_log("[info] ✅ FFmpeg یافت شد.")
+        if aria2c:
+            self._append_log("[info] 🚀 aria2c یافت شد — دانلود موازی فعال است.")
+        else:
+            self._append_log("[info] ℹ️ aria2c یافت نشد (اختیاری — برای سرعت بیشتر نصب کنید).")
 
     def _toggle_cookie_mode(self):
         use_browser = self.radio_browser.isChecked()
@@ -494,8 +560,7 @@ class MainWindow(QMainWindow):
         self.format_group.setVisible(True)
         self.playlist_group.setVisible(False)
 
-        t = threading.Thread(target=self._fetch_worker, args=(url,), daemon=True)
-        t.start()
+        self._spawn_thread(self._fetch_worker, (url,))
 
     def _fetch_worker(self, url):
         try:
@@ -510,6 +575,7 @@ class MainWindow(QMainWindow):
                 cookie_file=cookie_file,
                 retries=int(self.retries_spin.value()),
                 log_callback=lambda m: self.signals.log.emit(m),
+                proxy=self._current_proxy(),
             )
 
             # دفاع در عمق: اگر yt-dlp در عمل یک پلی‌لیست برگرداند
@@ -567,6 +633,25 @@ class MainWindow(QMainWindow):
             return self.browser_combo.currentText().strip() or None, None
         return None, self.cookie_file_input.text().strip() or None
 
+    def _current_proxy(self):
+        """ساخت URL پراکسی بر اساس UI؛ اگر غیرفعال یا بدون میزبان بود None برمی‌گرداند"""
+        if not self.proxy_check.isChecked():
+            return None
+        host = self.proxy_host.text().strip()
+        if not host:
+            return None
+        proto = self.proxy_proto.currentText()
+        port = self.proxy_port.value()
+        return f"{proto}://{host}:{port}"
+
+    def _spawn_thread(self, target, args=()):
+        """شروع thread و ردیابی آن برای بستن ایمن"""
+        self._workers = [t for t in self._workers if t.is_alive()]
+        t = threading.Thread(target=target, args=args, daemon=True)
+        t.start()
+        self._workers.append(t)
+        return t
+
     def _resolve_format(self) -> str:
         """تعیین selector فرمت بر اساس ورودی/جدول/پیش‌فرض + حالت فقط-صدا"""
         fmt = self.format_id_input.text().strip()
@@ -595,8 +680,7 @@ class MainWindow(QMainWindow):
         self.playlist_table.setRowCount(0)
         # مخفی کردن جدول فرمت‌های تک‌ویدئو تا فرم بزرگ نشود
         self.format_group.setVisible(False)
-        t = threading.Thread(target=self._playlist_fetch_worker, args=(url,), daemon=True)
-        t.start()
+        self._spawn_thread(self._playlist_fetch_worker, (url,))
 
     def _playlist_fetch_worker(self, url):
         try:
@@ -610,6 +694,7 @@ class MainWindow(QMainWindow):
                 cookie_file=cookie_file,
                 retries=int(self.retries_spin.value()),
                 log_callback=lambda m: self.signals.log.emit(m),
+                proxy=self._current_proxy(),
             )
             self.signals.playlist_ready.emit(info)
         except Exception as e:
@@ -638,12 +723,10 @@ class MainWindow(QMainWindow):
         """شروع برآورد حجم ویدئوها در پس‌زمینه (تدریجی و بدون قفل UI)"""
         gen = self._size_gen
         browser, cookie_file = self._current_cookie()
-        t = threading.Thread(
-            target=self._playlist_size_worker, args=(gen, browser, cookie_file), daemon=True
-        )
-        t.start()
+        proxy = self._current_proxy()
+        self._spawn_thread(self._playlist_size_worker, (gen, browser, cookie_file, proxy))
 
-    def _playlist_size_worker(self, gen, browser, cookie_file):
+    def _playlist_size_worker(self, gen, browser, cookie_file, proxy):
         # دانلودر جداگانه تا با دانلود اصلی و پرچم لغو تداخل نکند
         size_dl = YouTubeDownloader()
         heights = [None, 2160, 1440, 1080, 720, 480, 360, "audio"]
@@ -652,7 +735,7 @@ class MainWindow(QMainWindow):
                 return  # پلی‌لیست جدید بارگذاری شد — متوقف شو
             try:
                 info = size_dl.extract_formats(
-                    v["url"], cookie_browser=browser, cookie_file=cookie_file, retries=2
+                    v["url"], cookie_browser=browser, cookie_file=cookie_file, retries=2, proxy=proxy
                 )
                 sizes = {h: size_dl.estimate_size_for_height(info, h) for h in heights}
             except Exception:
@@ -744,6 +827,7 @@ class MainWindow(QMainWindow):
         fmt = self._resolve_playlist_format()
         audio_only = self.audio_only_check.isChecked()
         browser, cookie_file = self._current_cookie()
+        proxy = self._current_proxy()
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
 
@@ -755,16 +839,13 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self._set_status(f"در حال دانلود {len(selected)} ویدئو از پلی‌لیست...")
 
-        t = threading.Thread(
-            target=self._playlist_download_worker,
-            args=(selected, output_dir, fmt, browser, cookie_file,
-                  retries, audio_only, audio_fmt),
-            daemon=True,
+        self._spawn_thread(
+            self._playlist_download_worker,
+            (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt, proxy),
         )
-        t.start()
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
-                                  retries, audio_only, audio_fmt):
+                                  retries, audio_only, audio_fmt, proxy):
         total = len(videos)
         for i, v in enumerate(videos, 1):
             if self.downloader.cancel_flag.is_set():
@@ -788,6 +869,7 @@ class MainWindow(QMainWindow):
                     postprocessor_callback=lambda p: self.signals.status.emit(
                         f"پس‌پردازش: {p}"
                     ),
+                    proxy=proxy,
                 )
                 self.signals.log.emit(f"[info] ✅ ({i}/{total}) تمام شد: {title}")
             except DownloadCancelled:
@@ -856,16 +938,17 @@ class MainWindow(QMainWindow):
                 f["ext"],
             ]
             for col, val in enumerate(values):
-                item = QTableWidgetItem(str(val))
+                if col == 7:  # ستون سایز — مرتب‌سازی عددی
+                    item = NumericTableWidgetItem(str(val))
+                    item.setData(Qt.ItemDataRole.UserRole, f.get("size_bytes", 0))
+                else:
+                    item = QTableWidgetItem(str(val))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 if f["kind"] == "video":
                     item.setForeground(Qt.GlobalColor.darkBlue)
                 elif f["kind"] == "audio":
                     item.setForeground(Qt.GlobalColor.darkGreen)
-
-                if col == 7:
-                    item.setData(Qt.ItemDataRole.UserRole, f.get("size_bytes", 0))
 
                 self.table.setItem(row, col, item)
 
@@ -922,20 +1005,18 @@ class MainWindow(QMainWindow):
         self._set_status("در حال دانلود...")
 
         browser, cookie_file = self._current_cookie()
+        proxy = self._current_proxy()
 
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
 
-        t = threading.Thread(
-            target=self._download_worker,
-            args=(url, output_dir, fmt, browser, cookie_file,
-                  retries, audio_only, audio_fmt),
-            daemon=True,
+        self._spawn_thread(
+            self._download_worker,
+            (url, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt, proxy),
         )
-        t.start()
 
     def _download_worker(self, url, output_dir, fmt, browser, cookie_file,
-                        retries, audio_only, audio_fmt):
+                        retries, audio_only, audio_fmt, proxy):
         try:
             self.downloader.download(
                 url=url,
@@ -951,6 +1032,7 @@ class MainWindow(QMainWindow):
                 postprocessor_callback=lambda p: self.signals.status.emit(
                     f"پس‌پردازش: {p}"
                 ),
+                proxy=proxy,
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -1028,12 +1110,33 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg)
 
     # ================= ذخیره تنظیمات در بستن =================
-    def closeEvent(self, event):
+    def _save_settings(self):
         self.settings.set("download_path", self.path_input.text())
         self.settings.set("browser", self.browser_combo.currentText())
         self.settings.set("retries", int(self.retries_spin.value()))
         self.settings.set("use_custom_cookie", self.radio_file.isChecked())
         self.settings.set("custom_cookie_path", self.cookie_file_input.text())
+        self.settings.set("proxy_enabled", self.proxy_check.isChecked())
+        self.settings.set("proxy_host", self.proxy_host.text().strip())
+        self.settings.set("proxy_port", int(self.proxy_port.value()))
+        self.settings.set("proxy_proto", self.proxy_proto.currentText())
+
+    def closeEvent(self, event):
+        if self.is_downloading:
+            ret = QMessageBox.question(
+                self, "خروج از برنامه",
+                "دانلود در حال انجام است. می‌خواهید دانلود را لغو کرده و برنامه را ببندید؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.downloader.cancel()
+            # صبر کوتاه برای پایان ایمن و حذف فایل‌های ناقص .part
+            for t in list(self._workers):
+                t.join(timeout=2)
+        self._save_settings()
         event.accept()
 
 
