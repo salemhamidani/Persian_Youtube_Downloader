@@ -23,15 +23,36 @@ class WorkerSignals(QObject):
     log = pyqtSignal(str)
     progress = pyqtSignal(dict)
     formats_ready = pyqtSignal(dict)
+    playlist_ready = pyqtSignal(dict)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
 
 YOUTUBE_URL_RE = re.compile(
-    r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/.+$",
+    r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)/.+$",
     re.IGNORECASE,
 )
+
+
+def is_playlist_url(url: str) -> bool:
+    """تشخیص لینک پلی‌لیست از لینک تک‌ویدئو"""
+    u = (url or "").strip().lower()
+    # هر لینکی که پارامتر list= داشته باشد (حتی watch?v=...&list=...) پلی‌لیست است
+    return "/playlist" in u or "list=" in u
+
+
+# گزینه‌های کیفیت برای دانلود پلی‌لیست: (برچسب، selector یت-dlp)
+QUALITY_OPTIONS = [
+    ("بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best"),
+    ("2160p — 4K", "bestvideo[height<=2160]+bestaudio/best[height<=2160]"),
+    ("1440p — 2K", "bestvideo[height<=1440]+bestaudio/best[height<=1440]"),
+    ("1080p — Full HD", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"),
+    ("720p — HD", "bestvideo[height<=720]+bestaudio/best[height<=720]"),
+    ("480p", "bestvideo[height<=480]+bestaudio/best[height<=480]"),
+    ("360p", "bestvideo[height<=360]+bestaudio/best[height<=360]"),
+    ("فقط صدا (بهترین)", "bestaudio/best"),
+]
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +71,7 @@ class MainWindow(QMainWindow):
         self.signals.log.connect(self._append_log)
         self.signals.progress.connect(self._on_progress)
         self.signals.formats_ready.connect(self._on_formats_ready)
+        self.signals.playlist_ready.connect(self._on_playlist_ready)
         self.signals.finished.connect(self._on_finished)
         self.signals.error.connect(self._on_error)
         self.signals.status.connect(self._set_status)
@@ -57,6 +79,7 @@ class MainWindow(QMainWindow):
         self.is_downloading = False
         self.current_info = None
         self.all_formats = []
+        self.playlist_items = []
 
         self._build_ui()
         self._load_settings_into_ui()
@@ -200,7 +223,68 @@ class MainWindow(QMainWindow):
 
         # ⚡ ارتفاع حداقلی برای گروه فرمت‌ها
         format_group.setMinimumHeight(450)
+        self.format_group = format_group
         main_layout.addWidget(format_group)
+
+        # ---- گروه پلی‌لیست ----
+        self.playlist_group = QGroupBox("🎵 پلی‌لیست")
+        playlist_layout = QVBoxLayout(self.playlist_group)
+
+        self.lbl_playlist_title = QLabel("")
+        self.lbl_playlist_title.setStyleSheet("font-weight: bold; color: #1976d2;")
+        playlist_layout.addWidget(self.lbl_playlist_title)
+
+        # کیفیت دانلود پلی‌لیست
+        q_layout = QHBoxLayout()
+        q_layout.addWidget(QLabel("کیفیت دانلود:"))
+        self.playlist_quality_combo = QComboBox()
+        for label, selector in QUALITY_OPTIONS:
+            self.playlist_quality_combo.addItem(label, selector)
+        q_layout.addWidget(self.playlist_quality_combo)
+        q_layout.addStretch()
+        playlist_layout.addLayout(q_layout)
+
+        self.playlist_table = QTableWidget(0, 5)
+        self.playlist_table.setHorizontalHeaderLabels(["", "#", "عنوان", "مدت", "کانال"])
+        self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.playlist_table.setAlternatingRowColors(True)
+        self.playlist_table.verticalHeader().setVisible(False)
+        self.playlist_table.verticalHeader().setDefaultSectionSize(26)
+        ph = self.playlist_table.horizontalHeader()
+        ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        ph.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        ph.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.playlist_table.setColumnWidth(0, 32)
+        self.playlist_table.setColumnWidth(1, 46)
+        self.playlist_table.setColumnWidth(3, 72)
+        self.playlist_table.setColumnWidth(4, 150)
+        self.playlist_table.setMinimumHeight(260)
+        playlist_layout.addWidget(self.playlist_table)
+
+        pl_btn_layout = QHBoxLayout()
+        self.btn_pl_select_all = QPushButton("✅ انتخاب همه")
+        self.btn_pl_select_none = QPushButton("◻️ هیچ‌کدام")
+        self.btn_pl_download = QPushButton("⬇️ دانلود انتخاب‌شده")
+        self.btn_pl_download.setMinimumHeight(34)
+        self.btn_pl_download.setStyleSheet(
+            "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; border-radius:6px; }"
+            "QPushButton:disabled { background-color: #9e9e9e; }"
+        )
+        self.btn_pl_download.setEnabled(False)
+        self.btn_pl_select_all.clicked.connect(self._playlist_select_all)
+        self.btn_pl_select_none.clicked.connect(self._playlist_select_none)
+        self.btn_pl_download.clicked.connect(self._start_playlist_download)
+        pl_btn_layout.addWidget(self.btn_pl_select_all)
+        pl_btn_layout.addWidget(self.btn_pl_select_none)
+        pl_btn_layout.addStretch()
+        pl_btn_layout.addWidget(self.btn_pl_download)
+        playlist_layout.addLayout(pl_btn_layout)
+
+        self.playlist_group.setVisible(False)  # تا بارگذاری پلی‌لیست پنهان می‌ماند
+        main_layout.addWidget(self.playlist_group)
 
         # ---- گروه ذخیره‌سازی + دانلود ----
         bottom_group = QGroupBox("۴) ذخیره‌سازی و دانلود")
@@ -389,24 +473,26 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "خطا", "لطفاً یک لینک معتبر یوتیوب وارد کنید.")
             return
 
+        # اگر لینک پلی‌لیست بود، مسیر پلی‌لیست را برو
+        if is_playlist_url(url):
+            self._fetch_playlist(url)
+            return
+
         self._set_status("در حال استخراج فرمت‌ها...")
         self.btn_fetch.setEnabled(False)
         self.table.setRowCount(0)
+        self.format_group.setVisible(True)
+        self.playlist_group.setVisible(False)
 
         t = threading.Thread(target=self._fetch_worker, args=(url,), daemon=True)
         t.start()
 
     def _fetch_worker(self, url):
         try:
-            browser = None
-            cookie_file = None
-            if self.radio_browser.isChecked():
-                browser = self.browser_combo.currentText().strip() or None
-            else:
-                cookie_file = self.cookie_file_input.text().strip() or None
-                if cookie_file and not self.cookie_mgr.validate_cookie_file(cookie_file):
-                    self.signals.error.emit("فایل کوکی نامعتبر است.")
-                    return
+            browser, cookie_file = self._current_cookie()
+            if cookie_file and not self.cookie_mgr.validate_cookie_file(cookie_file):
+                self.signals.error.emit("فایل کوکی نامعتبر است.")
+                return
 
             info = self.downloader.extract_formats(
                 url,
@@ -415,6 +501,18 @@ class MainWindow(QMainWindow):
                 retries=int(self.retries_spin.value()),
                 log_callback=lambda m: self.signals.log.emit(m),
             )
+
+            # دفاع در عمق: اگر yt-dlp در عمل یک پلی‌لیست برگرداند
+            # (مثلاً URL حاوی list= که تشخیص ندادیم یا لینک کانال)، به مسیر پلی‌لیست بفرست
+            if info and (
+                info.get("_type") == "playlist"
+                or (info.get("entries") and not info.get("formats"))
+            ):
+                self.signals.playlist_ready.emit(
+                    self.downloader._normalize_playlist(info)
+                )
+                return
+
             self.signals.formats_ready.emit(info)
         except Exception as e:
             self.signals.error.emit(f"خطا در استخراج فرمت‌ها: {e}")
@@ -424,6 +522,7 @@ class MainWindow(QMainWindow):
     def _on_formats_ready(self, info: dict):
         self.current_info = info
         self.all_formats = self.downloader.parse_formats(info)
+        self.format_group.setVisible(True)
         self._apply_filter()
         self.btn_fetch.setEnabled(True)
         self._set_status(f"فرمت‌ها آماده شد ({len(self.all_formats)} مورد)")
@@ -450,6 +549,178 @@ class MainWindow(QMainWindow):
             f"صدا تنها: {kinds['audio']}, "
             f"سایر: {kinds['other']}"
         )
+
+    # ================= پلی‌لیست =================
+    def _current_cookie(self):
+        """بازگرداندن منبع کوکی فعلی بر اساس UI"""
+        if self.radio_browser.isChecked():
+            return self.browser_combo.currentText().strip() or None, None
+        return None, self.cookie_file_input.text().strip() or None
+
+    def _resolve_format(self) -> str:
+        """تعیین selector فرمت بر اساس ورودی/جدول/پیش‌فرض + حالت فقط-صدا"""
+        fmt = self.format_id_input.text().strip()
+        if not fmt:
+            selected_rows = sorted(set(i.row() for i in self.table.selectedIndexes()))
+            if selected_rows:
+                ids = [self.table.item(r, 0).text() for r in selected_rows]
+                fmt = "+".join(ids)
+                self._append_log(f"[info] فرمت‌های انتخابی از جدول: {fmt}")
+            else:
+                fmt = "bestvideo+bestaudio/best"
+                self._append_log("[info] هیچ فرمتی انتخاب نشد — استفاده از best.")
+        if self.audio_only_check.isChecked() and fmt in ("", "bestvideo+bestaudio/best"):
+            fmt = "bestaudio/best"
+        return fmt
+
+    def _resolve_playlist_format(self) -> str:
+        """تعیین selector کیفیت برای دانلود پلی‌لیست"""
+        if self.audio_only_check.isChecked():
+            return "bestaudio/best"
+        return self.playlist_quality_combo.currentData() or "bestvideo+bestaudio/best"
+
+    def _fetch_playlist(self, url):
+        self._set_status("در حال استخراج پلی‌لیست...")
+        self.btn_fetch.setEnabled(False)
+        self.playlist_table.setRowCount(0)
+        # مخفی کردن جدول فرمت‌های تک‌ویدئو تا فرم بزرگ نشود
+        self.format_group.setVisible(False)
+        t = threading.Thread(target=self._playlist_fetch_worker, args=(url,), daemon=True)
+        t.start()
+
+    def _playlist_fetch_worker(self, url):
+        try:
+            browser, cookie_file = self._current_cookie()
+            if cookie_file and not self.cookie_mgr.validate_cookie_file(cookie_file):
+                self.signals.error.emit("فایل کوکی نامعتبر است.")
+                return
+            info = self.downloader.extract_playlist(
+                url,
+                cookie_browser=browser,
+                cookie_file=cookie_file,
+                retries=int(self.retries_spin.value()),
+                log_callback=lambda m: self.signals.log.emit(m),
+            )
+            self.signals.playlist_ready.emit(info)
+        except Exception as e:
+            self.signals.error.emit(f"خطا در استخراج پلی‌لیست: {e}")
+        finally:
+            self.signals.log.emit("[info] استخراج پلی‌لیست به پایان رسید.")
+
+    def _on_playlist_ready(self, info: dict):
+        self.playlist_items = info.get("entries", [])
+        count = len(self.playlist_items)
+        self.lbl_playlist_title.setText(
+            f"🎵 {info.get('title', 'پلی‌لیست')} — {count} ویدئو"
+        )
+        self._fill_playlist_table(self.playlist_items)
+        self.playlist_group.setVisible(True)
+        self.btn_fetch.setEnabled(True)
+        self.btn_pl_download.setEnabled(True)
+        self._set_status(f"پلی‌لیست آماده شد ({count} ویدئو)")
+        self._append_log(f"[info] 📋 پلی‌لیست «{info.get('title', '?')}» — {count} ویدئو")
+
+    def _fill_playlist_table(self, items):
+        self.playlist_table.setRowCount(len(items))
+        for row, v in enumerate(items):
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk.setCheckState(Qt.CheckState.Checked)
+            self.playlist_table.setItem(row, 0, chk)
+
+            idx = v.get("index") or (row + 1)
+            self.playlist_table.setItem(row, 1, QTableWidgetItem(str(idx)))
+            self.playlist_table.setItem(row, 2, QTableWidgetItem(str(v.get("title", ""))))
+
+            dur = v.get("duration")
+            dur_str = self._fmt_time(int(dur)) if dur else "?"
+            self.playlist_table.setItem(row, 3, QTableWidgetItem(dur_str))
+            self.playlist_table.setItem(row, 4, QTableWidgetItem(str(v.get("uploader", ""))))
+
+    def _playlist_select_all(self):
+        for r in range(self.playlist_table.rowCount()):
+            item = self.playlist_table.item(r, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked)
+
+    def _playlist_select_none(self):
+        for r in range(self.playlist_table.rowCount()):
+            item = self.playlist_table.item(r, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
+
+    def _start_playlist_download(self):
+        selected = []
+        for r in range(self.playlist_table.rowCount()):
+            chk = self.playlist_table.item(r, 0)
+            if chk and chk.checkState() == Qt.CheckState.Checked and r < len(self.playlist_items):
+                selected.append(self.playlist_items[r])
+
+        if not selected:
+            QMessageBox.information(self, "توجه", "ابتدا ویدئو(های) موردنظر را از لیست انتخاب کنید.")
+            return
+
+        output_dir = self.path_input.text().strip()
+        if not output_dir or not Path(output_dir).is_dir():
+            QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است.")
+            return
+
+        fmt = self._resolve_playlist_format()
+        audio_only = self.audio_only_check.isChecked()
+        browser, cookie_file = self._current_cookie()
+        retries = int(self.retries_spin.value())
+        audio_fmt = self.audio_format_combo.currentText()
+
+        self.is_downloading = True
+        self.btn_download.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_fetch.setEnabled(False)
+        self.btn_pl_download.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self._set_status(f"در حال دانلود {len(selected)} ویدئو از پلی‌لیست...")
+
+        t = threading.Thread(
+            target=self._playlist_download_worker,
+            args=(selected, output_dir, fmt, browser, cookie_file,
+                  retries, audio_only, audio_fmt),
+            daemon=True,
+        )
+        t.start()
+
+    def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
+                                  retries, audio_only, audio_fmt):
+        total = len(videos)
+        for i, v in enumerate(videos, 1):
+            if self.downloader.cancel_flag.is_set():
+                self.signals.error.emit("دانلود پلی‌لیست توسط کاربر لغو شد.")
+                return
+            title = v.get("title", "?")
+            self.signals.log.emit(f"[info] ⏬ ({i}/{total}) در حال دانلود: {title}")
+            self.signals.status.emit(f"دانلود ویدئوی {i} از {total}")
+            try:
+                self.downloader.download(
+                    url=v["url"],
+                    output_dir=output_dir,
+                    format_selector=fmt,
+                    cookie_browser=browser,
+                    cookie_file=cookie_file,
+                    retries=retries,
+                    audio_only=audio_only,
+                    audio_format=audio_fmt,
+                    progress_callback=lambda d: self.signals.progress.emit(d),
+                    log_callback=lambda m: self.signals.log.emit(m),
+                    postprocessor_callback=lambda p: self.signals.status.emit(
+                        f"پس‌پردازش: {p}"
+                    ),
+                )
+                self.signals.log.emit(f"[info] ✅ ({i}/{total}) تمام شد: {title}")
+            except DownloadCancelled:
+                self.signals.error.emit("دانلود توسط کاربر لغو شد.")
+                return
+            except Exception as e:
+                self.signals.log.emit(f"[error] خطا در «{title}»: {e}")
+                # ادامه با ویدئوی بعدی
+        self.signals.finished.emit()
 
     def _apply_filter(self):
         idx = self.filter_combo.currentIndex()
@@ -547,6 +818,8 @@ class MainWindow(QMainWindow):
     # ================= شروع دانلود =================
     def _toggle_audio_only(self, checked: bool):
         self.audio_format_combo.setEnabled(checked)
+        if hasattr(self, "playlist_quality_combo"):
+            self.playlist_quality_combo.setEnabled(not checked)
 
     def _start_download(self):
         url = self.url_input.text().strip()
@@ -559,21 +832,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است.")
             return
 
-        fmt = self.format_id_input.text().strip()
-
-        if not fmt:
-            selected_rows = sorted(set(i.row() for i in self.table.selectedIndexes()))
-            if selected_rows:
-                ids = [self.table.item(r, 0).text() for r in selected_rows]
-                fmt = "+".join(ids)
-                self._append_log(f"[info] فرمت‌های انتخابی از جدول: {fmt}")
-            else:
-                fmt = "bestvideo+bestaudio/best"
-                self._append_log("[info] هیچ فرمتی انتخاب نشد — استفاده از best.")
-
+        fmt = self._resolve_format()
         audio_only = self.audio_only_check.isChecked()
-        if audio_only and fmt in ("", "bestvideo+bestaudio/best"):
-            fmt = "bestaudio/best"
 
         self._append_log(f"[info] Format selector: {fmt}")
 
@@ -584,12 +844,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self._set_status("در حال دانلود...")
 
-        browser = None
-        cookie_file = None
-        if self.radio_browser.isChecked():
-            browser = self.browser_combo.currentText().strip() or None
-        else:
-            cookie_file = self.cookie_file_input.text().strip() or None
+        browser, cookie_file = self._current_cookie()
 
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
@@ -671,6 +926,7 @@ class MainWindow(QMainWindow):
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.btn_fetch.setEnabled(True)
+        self.btn_pl_download.setEnabled(bool(self.playlist_items))
         self._set_status("✅ دانلود با موفقیت انجام شد.")
         self._append_log("[info] دانلود با موفقیت به پایان رسید.")
         QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
@@ -680,6 +936,7 @@ class MainWindow(QMainWindow):
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.btn_fetch.setEnabled(True)
+        self.btn_pl_download.setEnabled(bool(self.playlist_items))
         self._set_status(f"❌ خطا: {msg}")
         self._append_log(f"[error] {msg}")
         QMessageBox.critical(self, "خطا", msg)

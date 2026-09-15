@@ -13,6 +13,25 @@ class DownloadCancelled(Exception):
     pass
 
 
+class _YdlLogger:
+    """لاگر ساده برای yt-dlp که پیام‌ها را به callback می‌فرستد"""
+
+    def __init__(self, cb: Optional[Callable[[str], None]] = None):
+        self.cb = cb
+
+    def debug(self, msg):
+        if self.cb:
+            self.cb(msg)
+
+    def warning(self, msg):
+        if self.cb:
+            self.cb(f"[warning] {msg}")
+
+    def error(self, msg):
+        if self.cb:
+            self.cb(f"[error] {msg}")
+
+
 class YouTubeDownloader:
     """کلاس مدیریت دانلود و استخراج اطلاعات با yt-dlp"""
 
@@ -79,7 +98,7 @@ class YouTubeDownloader:
             # ⚡ استفاده از کلاینت‌های web برای سازگاری با کوکی‌ها
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web", "web_safari", "tv_embedded"],
+                    "player_client": ["web", "web_safari"],
                 }
             },
         }
@@ -162,29 +181,63 @@ class YouTubeDownloader:
             if "external_downloader" in opts:
                 log_callback(f"[info] 🚀 دانلودر خارجی: {opts['external_downloader']}")
 
-        class _Logger:
-            def __init__(self, cb):
-                self.cb = cb
-
-            def debug(self, msg):
-                if self.cb:
-                    self.cb(msg)
-
-            def warning(self, msg):
-                if self.cb:
-                    self.cb(f"[warning] {msg}")
-
-            def error(self, msg):
-                if self.cb:
-                    self.cb(f"[error] {msg}")
-
-        opts["logger"] = _Logger(log_callback)
+        opts["logger"] = _YdlLogger(log_callback)
         opts["verbose"] = verbose
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
         return info
+
+    # ---------- استخراج پلی‌لیست ----------
+    def extract_playlist(
+        self,
+        url: str,
+        cookie_browser: Optional[str] = None,
+        cookie_file: Optional[str] = None,
+        retries: int = 5,
+        log_callback: Optional[Callable[[str], None]] = None,
+    ) -> dict:
+        """استخراج لیست ویدئوهای یک پلی‌لیست (سریع و بدون دانلود)"""
+        self._reset()
+        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=True)
+        opts["skip_download"] = True
+        opts["extract_flat"] = "in_playlist"  # فقط اطلاعات سطحی هر ویدئو (سریع)
+        opts["logger"] = _YdlLogger(log_callback)
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        return self._normalize_playlist(info)
+
+    @staticmethod
+    def _normalize_playlist(info: dict) -> dict:
+        """تبدیل دیکشنری پلی‌لیست yt-dlp به ساختار استاندارد برنامه"""
+        entries = info.get("entries") or []
+        items = []
+        for e in entries:
+            if not e:
+                continue
+            vid = e.get("url") or e.get("webpage_url")
+            if not vid and e.get("id"):
+                vid = f"https://www.youtube.com/watch?v={e['id']}"
+            if not vid:
+                continue
+            items.append({
+                "id": e.get("id", ""),
+                "title": e.get("title", "") or "(بدون عنوان)",
+                "url": vid,
+                "duration": e.get("duration"),
+                "uploader": e.get("uploader") or e.get("channel") or "",
+                "index": e.get("playlist_index", 0) or 0,
+            })
+
+        return {
+            "title": info.get("title", "") or "پلی‌لیست",
+            "uploader": info.get("uploader") or info.get("channel") or "",
+            "entries": items,
+            "count": len(items),
+        }
 
     # ---------- دانلود ----------
     def download(
@@ -208,7 +261,7 @@ class YouTubeDownloader:
         outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")
         opts["outtmpl"] = outtmpl
         opts["format"] = format_selector
-        opts["merge_output_format"] = "mp4"
+        opts["merge_output_format"] = "mp4/mkv"
 
         if audio_only:
             opts["postprocessors"] = [
@@ -232,23 +285,7 @@ class YouTubeDownloader:
         opts["progress_hooks"] = [_progress_hook]
         opts["postprocessor_hooks"] = [_pp_hook]
 
-        class _Logger:
-            def __init__(self, cb):
-                self.cb = cb
-
-            def debug(self, msg):
-                if self.cb:
-                    self.cb(msg)
-
-            def warning(self, msg):
-                if self.cb:
-                    self.cb(f"[warning] {msg}")
-
-            def error(self, msg):
-                if self.cb:
-                    self.cb(f"[error] {msg}")
-
-        opts["logger"] = _Logger(log_callback)
+        opts["logger"] = _YdlLogger(log_callback)
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             self.current_ydl = ydl
