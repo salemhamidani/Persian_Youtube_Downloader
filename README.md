@@ -13,7 +13,7 @@
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.qt.io/)
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.8-red?style=for-the-badge)](https://github.com/yt-dlp/yt-dlp)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=for-the-badge)](https://github.com/salemhamidani/Persian_Youtube_Downloader)
-[![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)](https://github.com/salemhamidani/Persian_Youtube_Downloader)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 <br>
 
