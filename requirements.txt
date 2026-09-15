@@ -1,0 +1,14 @@
+# وابستگی‌های زمان اجرای برنامه
+# نصب:  pip install -r requirements.txt
+
+yt-dlp==2026.8.19
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6_sip==13.12.0
+pyperclip==1.11.0
+
+# --- ابزارهای ساخت (اختیاری — برای تولید exe) ---
+# در صورت نیاز به فایل اجرایی، خطوط زیر را از حالت کامنت خارج کنید:
+# pyinstaller==6.22.3
+# auto-py-to-exe==2.50.1
+# pyinstaller-hooks-contrib==2026.7

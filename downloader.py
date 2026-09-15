@@ -1,0 +1,386 @@
+import os
+import threading
+from pathlib import Path
+from typing import Callable, Optional
+
+import yt_dlp
+
+from cookies import CookieManager
+
+
+class DownloadCancelled(Exception):
+    """استثنای لغو دانلود توسط کاربر"""
+    pass
+
+
+class YouTubeDownloader:
+    """کلاس مدیریت دانلود و استخراج اطلاعات با yt-dlp"""
+
+    # User-Agent پیش‌فرض شبیه Chrome ویندوز
+    DEFAULT_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+
+    # ⚡ تنظیمات سرعت — قابل تغییر بر اساس نیاز
+    CONCURRENT_FRAGMENTS = 8        # تعداد دانلود همزمان قطعات (پیش‌فرض: 1)
+    HTTP_CHUNK_SIZE = 10 * 1024 * 1024  # 10MB — همان مقداری که throttle یوتیوب را bypass می‌کند
+    BUFFER_SIZE = 1024 * 1024       # 1MB بافر
+
+    def __init__(self):
+        self.cancel_flag = threading.Event()
+        self.current_ydl: Optional[yt_dlp.YoutubeDL] = None
+
+    def cancel(self):
+        """درخواست لغو دانلود جاری"""
+        self.cancel_flag.set()
+
+    def _reset(self):
+        self.cancel_flag.clear()
+
+    # ---------- ساخت base_opts ----------
+    def _build_base_opts(
+        self,
+        cookie_browser: Optional[str] = None,
+        cookie_file: Optional[str] = None,
+        retries: int = 5,
+        quiet: bool = False,
+        verbose: bool = False,
+    ) -> dict:
+        """ساخت پارامترهای پایه برای yt-dlp — با تنظیمات سرعت بالا"""
+
+        opts = {
+            "quiet": quiet,
+            "no_warnings": quiet,
+            "retries": retries,
+            "fragment_retries": retries,
+            "socket_timeout": 30,
+            "nocheckcertificate": False,
+            "ignoreerrors": False,
+
+            # ⚡⚡⚡ تنظیمات کلیدی سرعت ⚡⚡⚡
+            # ۱. تعداد دانلود همزمان قطعات ویدئوهای HLS/DASH
+            "concurrent_fragment_downloads": self.CONCURRENT_FRAGMENTS,
+
+            # ۲. اندازه چانک HTTP — یوتیوب throttle می‌کند اگر چانک بیشتر از 10MB باشد
+            #    این مقدار دقیقاً 10MB است تا از throttle جلوگیری شود
+            "http_chunk_size": self.HTTP_CHUNK_SIZE,
+
+            # ۳. اندازه بافر دریافت داده
+            "buffersize": self.BUFFER_SIZE,
+
+            # ⚡ User-Agent شبیه مرورگر واقعی برای دور زدن بلاک یوتیوب
+            "http_headers": {
+                "User-Agent": self.DEFAULT_UA,
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+
+            # ⚡ استفاده از کلاینت‌های web برای سازگاری با کوکی‌ها
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web", "web_safari", "tv_embedded"],
+                }
+            },
+        }
+
+        # ⚡ اگر aria2c نصب بود، از آن به عنوان دانلودر خارجی استفاده کن
+        # این سریع‌ترین گزینه است (اختیاری)
+        if self._has_aria2c():
+            opts["external_downloader"] = "aria2c"
+            opts["external_downloader_args"] = [
+                "-x", str(self.CONCURRENT_FRAGMENTS),  # تعداد کانکشن
+                "-s", str(self.CONCURRENT_FRAGMENTS),  # تعداد split
+                "-k", "1M",                              # حداقل سایز chunk
+                "--min-split-size=1M",
+            ]
+
+        if verbose:
+            opts["verbose"] = True
+
+        # ⚡ اولویت با فایل کوکی اگر داده شده باشد
+        if cookie_file:
+            cookie_path = str(Path(cookie_file).resolve())
+            if not os.path.isfile(cookie_path):
+                raise FileNotFoundError(f"فایل کوکی یافت نشد: {cookie_path}")
+
+            cookie_path = CookieManager.normalize_cookie_file(cookie_path)
+            opts["cookiefile"] = cookie_path
+            if not quiet:
+                print(f"[debug] cookiefile set to: {cookie_path}")
+
+        elif cookie_browser:
+            browser = cookie_browser.lower().strip()
+            browser_map = {
+                "chrome": "chrome",
+                "firefox": "firefox",
+                "edge": "edge",
+                "opera": "opera",
+                "brave": "brave",
+                "chromium": "chromium",
+                "vivaldi": "vivaldi",
+                "safari": "safari",
+            }
+            browser_name = browser_map.get(browser, browser)
+            opts["cookiesfrombrowser"] = (browser_name,)
+            if not quiet:
+                print(f"[debug] cookiesfrombrowser set to: {browser_name}")
+
+        return opts
+
+    @staticmethod
+    def _has_aria2c() -> bool:
+        """بررسی نصب بودن aria2c روی سیستم"""
+        import shutil
+        return shutil.which("aria2c") is not None
+
+    # ---------- استخراج فرمت‌ها ----------
+    def extract_formats(
+        self,
+        url: str,
+        cookie_browser: Optional[str] = None,
+        cookie_file: Optional[str] = None,
+        retries: int = 5,
+        log_callback: Optional[Callable[[str], None]] = None,
+        verbose: bool = False,
+    ) -> dict:
+        """استخراج لیست فرمت‌های موجود"""
+        self._reset()
+        opts = self._build_base_opts(
+            cookie_browser, cookie_file, retries, quiet=True, verbose=verbose
+        )
+        opts["skip_download"] = True
+
+        if log_callback:
+            log_callback(f"[info] در حال استخراج اطلاعات از: {url}")
+            src = opts.get("cookiefile") or opts.get("cookiesfrombrowser")
+            log_callback(f"[debug] منبع کوکی: {src}")
+            log_callback(
+                f"[info] ⚡ تنظیمات سرعت: {self.CONCURRENT_FRAGMENTS} دانلود همزمان، "
+                f"چانک {self.HTTP_CHUNK_SIZE // (1024*1024)}MB"
+            )
+            if "external_downloader" in opts:
+                log_callback(f"[info] 🚀 دانلودر خارجی: {opts['external_downloader']}")
+
+        class _Logger:
+            def __init__(self, cb):
+                self.cb = cb
+
+            def debug(self, msg):
+                if self.cb:
+                    self.cb(msg)
+
+            def warning(self, msg):
+                if self.cb:
+                    self.cb(f"[warning] {msg}")
+
+            def error(self, msg):
+                if self.cb:
+                    self.cb(f"[error] {msg}")
+
+        opts["logger"] = _Logger(log_callback)
+        opts["verbose"] = verbose
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        return info
+
+    # ---------- دانلود ----------
+    def download(
+        self,
+        url: str,
+        output_dir: str,
+        format_selector: str,
+        cookie_browser: Optional[str] = None,
+        cookie_file: Optional[str] = None,
+        retries: int = 5,
+        audio_only: bool = False,
+        audio_format: str = "mp3",
+        progress_callback: Optional[Callable[[dict], None]] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        postprocessor_callback: Optional[Callable[[str], None]] = None,
+    ):
+        """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
+        self._reset()
+        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=False)
+
+        outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")
+        opts["outtmpl"] = outtmpl
+        opts["format"] = format_selector
+        opts["merge_output_format"] = "mp4"
+
+        if audio_only:
+            opts["postprocessors"] = [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": audio_format,
+                    "preferredquality": "192",
+                }
+            ]
+
+        def _progress_hook(d):
+            if self.cancel_flag.is_set():
+                raise DownloadCancelled("دانلود توسط کاربر لغو شد")
+            if progress_callback:
+                progress_callback(d)
+
+        def _pp_hook(d):
+            if postprocessor_callback:
+                postprocessor_callback(d.get("postprocessor", ""))
+
+        opts["progress_hooks"] = [_progress_hook]
+        opts["postprocessor_hooks"] = [_pp_hook]
+
+        class _Logger:
+            def __init__(self, cb):
+                self.cb = cb
+
+            def debug(self, msg):
+                if self.cb:
+                    self.cb(msg)
+
+            def warning(self, msg):
+                if self.cb:
+                    self.cb(f"[warning] {msg}")
+
+            def error(self, msg):
+                if self.cb:
+                    self.cb(f"[error] {msg}")
+
+        opts["logger"] = _Logger(log_callback)
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            self.current_ydl = ydl
+            try:
+                ydl.download([url])
+            finally:
+                self.current_ydl = None
+                if self.cancel_flag.is_set():
+                    raise DownloadCancelled("دانلود توسط کاربر لغو شد")
+
+    # ---------- کمکی: پارس فرمت‌ها ----------
+    @staticmethod
+    def parse_formats(info: dict) -> list:
+        """تبدیل اطلاعات فرمت‌ها به لیست دیکشنری برای نمایش در جدول"""
+        formats = []
+
+        duration = info.get("duration") or 0
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            duration = 0.0
+
+        for f in info.get("formats", []) or []:
+            format_id = f.get("format_id", "")
+            ext = f.get("ext", "")
+            vcodec = f.get("vcodec", "none") or "none"
+            acodec = f.get("acodec", "none") or "none"
+            resolution = f.get("resolution") or (
+                f"{f.get('width', '?')}x{f.get('height', '?')}"
+                if f.get("width") else "audio only"
+            )
+            fps = f.get("fps", "")
+            abr = f.get("abr", "")
+            vbr = f.get("vbr", "")
+            tbr = f.get("tbr", "")
+
+            filesize = f.get("filesize") or f.get("filesize_approx")
+            if not filesize and tbr and duration:
+                try:
+                    filesize = float(tbr) * 1000 * duration / 8
+                except (TypeError, ValueError):
+                    filesize = 0
+
+            if filesize:
+                size_str = YouTubeDownloader._human_size(filesize)
+            else:
+                size_str = "?"
+
+            language = (
+                f.get("language")
+                or f.get("language_preference")
+                or ""
+            )
+            lang_display = YouTubeDownloader._format_language(language)
+
+            has_video = vcodec != "none"
+            has_audio = acodec != "none"
+            if has_video and has_audio:
+                kind = "video+audio"
+            elif has_video:
+                kind = "video"
+            elif has_audio:
+                kind = "audio"
+            else:
+                kind = "other"
+
+            formats.append({
+                "id": format_id,
+                "ext": ext,
+                "resolution": resolution,
+                "fps": fps,
+                "vcodec": vcodec,
+                "acodec": acodec,
+                "abr": f"{abr:.1f}k" if isinstance(abr, (int, float)) else "",
+                "vbr": f"{vbr:.1f}k" if isinstance(vbr, (int, float)) else "",
+                "tbr": f"{tbr:.1f}k" if isinstance(tbr, (int, float)) else "",
+                "size": size_str,
+                "size_bytes": int(filesize) if filesize else 0,
+                "note": f.get("format_note", ""),
+                "kind": kind,
+                "filesize": filesize or 0,
+                "language": lang_display,
+                "language_raw": language,
+            })
+
+        order = {"video+audio": 0, "video": 1, "audio": 2, "other": 3}
+        formats.sort(key=lambda x: (
+            order.get(x["kind"], 9),
+            -x["size_bytes"],
+        ))
+        return formats
+
+    @staticmethod
+    def _format_language(lang_code) -> str:
+        """تبدیل کد زبان به نام قابل خواندن"""
+        if not lang_code:
+            return ""
+
+        if isinstance(lang_code, dict):
+            lang_code = lang_code.get("code") or lang_code.get("name") or ""
+            if isinstance(lang_code, dict):
+                lang_code = lang_code.get("code", "")
+
+        lang_code = str(lang_code).lower().strip()
+
+        lang_map = {
+            "en": "English", "en-us": "English (US)", "en-gb": "English (UK)",
+            "fa": "فارسی", "ar": "Arabic", "iw": "Hebrew", "he": "Hebrew",
+            "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+            "zh-cn": "Chinese (CN)", "zh-tw": "Chinese (TW)",
+            "de": "German", "de-de": "German",
+            "fr": "French", "fr-fr": "French",
+            "es": "Spanish", "es-us": "Spanish (US)",
+            "it": "Italian", "pt": "Portuguese", "pt-br": "Portuguese (BR)",
+            "ru": "Russian", "uk": "Ukrainian", "pl": "Polish",
+            "nl": "Dutch", "nl-nl": "Dutch",
+            "hi": "Hindi", "bn": "Bengali", "ml": "Malayalam",
+            "id": "Indonesian", "tr": "Turkish", "vi": "Vietnamese",
+            "th": "Thai", "sv": "Swedish", "no": "Norwegian",
+            "da": "Danish", "fi": "Finnish", "cs": "Czech",
+            "el": "Greek", "hu": "Hungarian", "ro": "Romanian",
+        }
+        return lang_map.get(lang_code, lang_code)
+
+    @staticmethod
+    def _human_size(size_bytes: int) -> str:
+        try:
+            size_bytes = float(size_bytes)
+        except Exception:
+            return "?"
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} PB"

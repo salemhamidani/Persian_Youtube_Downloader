@@ -1,0 +1,53 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# === محیط مجازی ===
+venv/
+.venv/
+env/
+ENV/
+
+# === ⚠️ امنیتی: هرگز کوکی‌ها را commit نکنید ===
+# فایل کوکی حاوی توکن‌های ورود حساب گوگل/یوتیوب است
+cookies.txt
+*.cookies.txt
+*.cookie
+
+# === تنظیمات و اطلاعات حساس ===
+.env
+.env.*
+!.env.example
+config.json
+*.local.json
+
+# === فایل‌های فشرده و باینری ===
+*.rar
+*.zip
+*.7z
+*.tar
+*.gz
+*.exe
+*.msi
+
+# === خروجی PyInstaller ===
+build/
+dist/
+*.spec
+*.manifest
+
+# === IDE و ادیتورها ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === لاگ و فایل‌های موقت ===
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
