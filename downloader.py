@@ -421,3 +421,67 @@ class YouTubeDownloader:
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024
         return f"{size_bytes:.1f} PB"
+
+    @staticmethod
+    def _format_size(f: dict, duration=None) -> int:
+        """حجم یک فرمت به بایت؛ اگر filesize نبود از bitrate تخمین بزن"""
+        sz = f.get("filesize") or f.get("filesize_approx")
+        if sz:
+            return int(sz)
+        tbr = f.get("tbr")
+        dur = duration if duration else f.get("duration")
+        if tbr and dur:
+            try:
+                return int(float(tbr) * 1000 * float(dur) / 8)
+            except (TypeError, ValueError):
+                return 0
+        return 0
+
+    @staticmethod
+    def estimate_size_for_height(info: dict, height) -> int:
+        """برآورد حجم کل (بایت) یک ویدئو برای حداکثر ارتفاع مشخص.
+
+        height: عدد (مثل 1080) یا None (بهترین کیفیت) یا "audio" (فقط صدا)
+        """
+        formats = info.get("formats") or []
+        duration = info.get("duration")
+        if not formats:
+            return 0
+
+        def is_audio(f):
+            return (f.get("vcodec") or "none") == "none" and (f.get("acodec") or "none") != "none"
+
+        def is_video(f):
+            return (f.get("vcodec") or "none") != "none"
+
+        if height == "audio":
+            audios = [f for f in formats if is_audio(f)]
+            if not audios:
+                return 0
+            best = max(audios, key=lambda f: f.get("tbr") or 0)
+            return YouTubeDownloader._format_size(best, duration)
+
+        videos = [f for f in formats if is_video(f)]
+        if height is not None:
+            videos = [f for f in videos if (f.get("height") or 0) <= height]
+        if not videos:
+            return 0
+
+        combined = [f for f in videos if (f.get("acodec") or "none") != "none"]
+        video_only = [f for f in videos if (f.get("acodec") or "none") == "none"]
+        audios = [f for f in formats if is_audio(f)]
+
+        best_v = max(video_only, key=lambda f: ((f.get("height") or 0), f.get("tbr") or 0)) if video_only else None
+        best_c = max(combined, key=lambda f: ((f.get("height") or 0), f.get("tbr") or 0)) if combined else None
+        best_a = max(audios, key=lambda f: f.get("tbr") or 0) if audios else None
+
+        # معادل bestvideo+bestaudio (فقط-ویدئو + صدا)
+        if best_v and best_a:
+            return YouTubeDownloader._format_size(best_v, duration) + YouTubeDownloader._format_size(best_a, duration)
+        if best_c:
+            return YouTubeDownloader._format_size(best_c, duration)
+        if best_v:
+            return YouTubeDownloader._format_size(best_v, duration)
+        if best_a:
+            return YouTubeDownloader._format_size(best_a, duration)
+        return 0

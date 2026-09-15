@@ -24,6 +24,7 @@ class WorkerSignals(QObject):
     progress = pyqtSignal(dict)
     formats_ready = pyqtSignal(dict)
     playlist_ready = pyqtSignal(dict)
+    playlist_size = pyqtSignal(dict)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -42,17 +43,20 @@ def is_playlist_url(url: str) -> bool:
     return "/playlist" in u or "list=" in u
 
 
-# گزینه‌های کیفیت برای دانلود پلی‌لیست: (برچسب، selector یت-dlp)
+# گزینه‌های کیفیت برای دانلود پلی‌لیست: (برچسب، selector یت-dlp، حداکثر ارتفاع یا 'audio')
 QUALITY_OPTIONS = [
-    ("بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best"),
-    ("2160p — 4K", "bestvideo[height<=2160]+bestaudio/best[height<=2160]"),
-    ("1440p — 2K", "bestvideo[height<=1440]+bestaudio/best[height<=1440]"),
-    ("1080p — Full HD", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"),
-    ("720p — HD", "bestvideo[height<=720]+bestaudio/best[height<=720]"),
-    ("480p", "bestvideo[height<=480]+bestaudio/best[height<=480]"),
-    ("360p", "bestvideo[height<=360]+bestaudio/best[height<=360]"),
-    ("فقط صدا (بهترین)", "bestaudio/best"),
+    ("بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best", None),
+    ("2160p — 4K", "bestvideo[height<=2160]+bestaudio/best[height<=2160]", 2160),
+    ("1440p — 2K", "bestvideo[height<=1440]+bestaudio/best[height<=1440]", 1440),
+    ("1080p — Full HD", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", 1080),
+    ("720p — HD", "bestvideo[height<=720]+bestaudio/best[height<=720]", 720),
+    ("480p", "bestvideo[height<=480]+bestaudio/best[height<=480]", 480),
+    ("360p", "bestvideo[height<=360]+bestaudio/best[height<=360]", 360),
+    ("فقط صدا (بهترین)", "bestaudio/best", "audio"),
 ]
+
+# نگاشت selector به ارتفاع برای برآورد حجم
+QUALITY_HEIGHT = {s: h for (_, s, h) in QUALITY_OPTIONS}
 
 
 class MainWindow(QMainWindow):
@@ -72,6 +76,7 @@ class MainWindow(QMainWindow):
         self.signals.progress.connect(self._on_progress)
         self.signals.formats_ready.connect(self._on_formats_ready)
         self.signals.playlist_ready.connect(self._on_playlist_ready)
+        self.signals.playlist_size.connect(self._on_playlist_size)
         self.signals.finished.connect(self._on_finished)
         self.signals.error.connect(self._on_error)
         self.signals.status.connect(self._set_status)
@@ -80,6 +85,8 @@ class MainWindow(QMainWindow):
         self.current_info = None
         self.all_formats = []
         self.playlist_items = []
+        self.playlist_sizes = {}
+        self._size_gen = 0
 
         self._build_ui()
         self._load_settings_into_ui()
@@ -238,14 +245,15 @@ class MainWindow(QMainWindow):
         q_layout = QHBoxLayout()
         q_layout.addWidget(QLabel("کیفیت دانلود:"))
         self.playlist_quality_combo = QComboBox()
-        for label, selector in QUALITY_OPTIONS:
+        for label, selector, _height in QUALITY_OPTIONS:
             self.playlist_quality_combo.addItem(label, selector)
+        self.playlist_quality_combo.currentIndexChanged.connect(self._refresh_playlist_sizes)
         q_layout.addWidget(self.playlist_quality_combo)
         q_layout.addStretch()
         playlist_layout.addLayout(q_layout)
 
-        self.playlist_table = QTableWidget(0, 5)
-        self.playlist_table.setHorizontalHeaderLabels(["", "#", "عنوان", "مدت", "کانال"])
+        self.playlist_table = QTableWidget(0, 6)
+        self.playlist_table.setHorizontalHeaderLabels(["", "#", "عنوان", "مدت", "حجم", "کانال"])
         self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.playlist_table.setAlternatingRowColors(True)
@@ -257,10 +265,12 @@ class MainWindow(QMainWindow):
         ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         ph.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        ph.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self.playlist_table.setColumnWidth(0, 32)
         self.playlist_table.setColumnWidth(1, 46)
         self.playlist_table.setColumnWidth(3, 72)
-        self.playlist_table.setColumnWidth(4, 150)
+        self.playlist_table.setColumnWidth(4, 90)
+        self.playlist_table.setColumnWidth(5, 150)
         self.playlist_table.setMinimumHeight(260)
         playlist_layout.addWidget(self.playlist_table)
 
@@ -609,6 +619,8 @@ class MainWindow(QMainWindow):
 
     def _on_playlist_ready(self, info: dict):
         self.playlist_items = info.get("entries", [])
+        self.playlist_sizes = {}
+        self._size_gen += 1
         count = len(self.playlist_items)
         self.lbl_playlist_title.setText(
             f"🎵 {info.get('title', 'پلی‌لیست')} — {count} ویدئو"
@@ -619,6 +631,68 @@ class MainWindow(QMainWindow):
         self.btn_pl_download.setEnabled(True)
         self._set_status(f"پلی‌لیست آماده شد ({count} ویدئو)")
         self._append_log(f"[info] 📋 پلی‌لیست «{info.get('title', '?')}» — {count} ویدئو")
+        self._append_log("[info] ⏳ در حال محاسبه حجم تقریبی ویدئوها...")
+        self._start_size_fetch()
+
+    def _start_size_fetch(self):
+        """شروع برآورد حجم ویدئوها در پس‌زمینه (تدریجی و بدون قفل UI)"""
+        gen = self._size_gen
+        browser, cookie_file = self._current_cookie()
+        t = threading.Thread(
+            target=self._playlist_size_worker, args=(gen, browser, cookie_file), daemon=True
+        )
+        t.start()
+
+    def _playlist_size_worker(self, gen, browser, cookie_file):
+        # دانلودر جداگانه تا با دانلود اصلی و پرچم لغو تداخل نکند
+        size_dl = YouTubeDownloader()
+        heights = [None, 2160, 1440, 1080, 720, 480, 360, "audio"]
+        for idx, v in enumerate(self.playlist_items):
+            if gen != self._size_gen:
+                return  # پلی‌لیست جدید بارگذاری شد — متوقف شو
+            try:
+                info = size_dl.extract_formats(
+                    v["url"], cookie_browser=browser, cookie_file=cookie_file, retries=2
+                )
+                sizes = {h: size_dl.estimate_size_for_height(info, h) for h in heights}
+            except Exception:
+                sizes = {}
+            self.signals.playlist_size.emit({"gen": gen, "index": idx, "sizes": sizes})
+
+    def _on_playlist_size(self, data: dict):
+        if data.get("gen") != self._size_gen:
+            return  # پاسخ از پلی‌لیست قبلی — نادیده بگیر
+        idx = data.get("index")
+        if idx is None or idx >= len(self.playlist_items):
+            return
+        self.playlist_sizes[idx] = data.get("sizes", {})
+        self._update_row_size(idx)
+
+    def _current_quality_height(self):
+        if self.audio_only_check.isChecked():
+            return "audio"
+        sel = self.playlist_quality_combo.currentData()
+        return QUALITY_HEIGHT.get(sel, None)
+
+    def _update_row_size(self, row):
+        if row >= self.playlist_table.rowCount():
+            return
+        sizes = self.playlist_sizes.get(row)
+        if not sizes:
+            self.playlist_table.setItem(row, 4, QTableWidgetItem("…"))
+            return
+        h = self._current_quality_height()
+        bytes_ = sizes.get(h, 0)
+        if bytes_:
+            self.playlist_table.setItem(
+                row, 4, QTableWidgetItem(YouTubeDownloader._human_size(bytes_))
+            )
+        else:
+            self.playlist_table.setItem(row, 4, QTableWidgetItem("نامشخص"))
+
+    def _refresh_playlist_sizes(self, *_):
+        for r in range(self.playlist_table.rowCount()):
+            self._update_row_size(r)
 
     def _fill_playlist_table(self, items):
         self.playlist_table.setRowCount(len(items))
@@ -635,7 +709,9 @@ class MainWindow(QMainWindow):
             dur = v.get("duration")
             dur_str = self._fmt_time(int(dur)) if dur else "?"
             self.playlist_table.setItem(row, 3, QTableWidgetItem(dur_str))
-            self.playlist_table.setItem(row, 4, QTableWidgetItem(str(v.get("uploader", ""))))
+
+            self.playlist_table.setItem(row, 4, QTableWidgetItem("…"))  # حجم (در حال محاسبه)
+            self.playlist_table.setItem(row, 5, QTableWidgetItem(str(v.get("uploader", ""))))
 
     def _playlist_select_all(self):
         for r in range(self.playlist_table.rowCount()):
@@ -820,6 +896,7 @@ class MainWindow(QMainWindow):
         self.audio_format_combo.setEnabled(checked)
         if hasattr(self, "playlist_quality_combo"):
             self.playlist_quality_combo.setEnabled(not checked)
+            self._refresh_playlist_sizes()
 
     def _start_download(self):
         url = self.url_input.text().strip()
