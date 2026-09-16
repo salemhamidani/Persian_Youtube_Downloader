@@ -214,9 +214,11 @@ python main.py
 Persian_Youtube_Downloader/
 ├── main.py           → نقطه ورود برنامه (entry point)
 ├── gui.py            → رابط کاربری گرافیکی (PyQt6)
+├── ui_utils.py       → ثابت‌ها و توابع کمکی UI (regex، کیفیت‌ها)
 ├── downloader.py     → منطق دانلود، زیرنویس و استخراج فرمت‌ها (yt-dlp)
 ├── cookies.py        → شناسایی مرورگرها و مدیریت فایل کوکی
 ├── settings.py       → ذخیره/بازیابی تنظیمات و تاریخچه (JSON)
+├── tests/            → تست‌های unit
 ├── requirements.txt  → وابستگی‌های پروژه (شامل PO Token)
 ├── README.md         → مستند پروژه (فارسی/انگلیسی)
 ├── LICENSE           → مجوز MIT
@@ -229,9 +231,11 @@ Persian_Youtube_Downloader/
 |------|------|---------|
 | `main.py` | entry point | اجرای برنامه |
 | `gui.py` | UI (PyQt6) | پنجره اصلی، جدول فرمت‌ها، پلی‌لیست، تاریخچه |
+| `ui_utils.py` | UI helpers | ثابت‌ها، regex لینک، گزینه‌های کیفیت، آیتم عددی |
 | `downloader.py` | download engine | ساخت پارامترهای yt-dlp، دانلود، زیرنویس، پارس فرمت‌ها |
 | `cookies.py` | cookie manager | تشخیص مرورگر، اعتبارسنجی کوکی |
 | `settings.py` | settings | ذخیره تنظیمات و تاریخچه در `~/.youtube_downloader/config.json` |
+| `tests/` | unit tests | تست‌های دانلودر، تنظیمات، کوکی و توابع UI |
 
 ---
 

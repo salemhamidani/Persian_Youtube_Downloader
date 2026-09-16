@@ -51,6 +51,8 @@ dist/
 *.tmp
 .DS_Store
 Thumbs.db
+_backup_*/
+tests/__pycache__/
 
 # === مستندات داخلی (از ریپو حذف می‌شوند) ===
 مستند-پروژه-youtube-downloader.md
