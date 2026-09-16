@@ -178,6 +178,56 @@ python main.py
 
 ---
 
+## 📦 ساخت نسخه قابل حمل (exe) | Build Portable EXE
+
+می‌توانید یک نسخه قابل حمل بسازید که روی سیستم میزبان **بدون نیاز به نصب پایتون، کتابخانه‌ها، ffmpeg یا aria2c** اجرا شود.
+
+### پیش‌نیاز ساخت
+
+```bash
+pip install pyinstaller
+```
+
+### ۱) ساخت exe
+
+```bash
+pyinstaller Persian_Youtube_Downloader.spec --noconfirm
+```
+
+خروجی در `dist/Persian_Youtube_Downloader/` ساخته می‌شود:
+
+```
+dist/Persian_Youtube_Downloader/
+├── Persian_Youtube_Downloader.exe
+└── _internal/          ← کتابخانه‌ها + ffmpeg + ffprobe + aria2c
+```
+
+### ۲) ساخت ZIP برای انتقال
+
+```bash
+python -c "import shutil; shutil.make_archive('Persian_Youtube_Downloader', 'zip', 'dist/Persian_Youtube_Downloader')"
+```
+
+فایل `Persian_Youtube_Downloader.zip` ساخته می‌شود (~۵۶MB).
+
+### چه چیزهایی باندل می‌شوند؟
+
+| آیتم | وضعیت |
+|------|:------:|
+| Python + PyQt6 + yt-dlp + curl_cffi + پلاگین PO Token | ✅ باندل |
+| ffmpeg + ffprobe (استخراج صدا + ادغام) | ✅ باندل |
+| aria2c (دانلود موازی) | ✅ باندل |
+| **Node.js + سرور PO Token** | ⚠️ برای **زیرنویس** روی سیستم میزبان لازم است |
+
+> 💡 دانلود ویدئو/صدا/پلی‌لیست در نسخه exe کاملاً بدون وابستگی است؛ فقط **زیرنویس** به Node.js (و سرور PO Token) نیاز دارد که برنامه در نبود آن هشدار می‌دهد.
+
+### استفاده در سیستم میزبان
+
+1. فایل ZIP را منتقل و استخراج کنید.
+2. `Persian_Youtube_Downloader.exe` را اجرا کنید.
+
+---
+
 ## 🎯 نحوه استفاده | Usage
 
 1. **لینک را کپی کنید** — برنامه به‌طور خودکار لینک را از کلیپ‌بورد تشخیص می‌دهد (یا دستی وارد کنید).
