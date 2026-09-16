@@ -52,6 +52,7 @@ from ui_utils import (
     QUALITY_OPTIONS,
     QUALITY_HEIGHT,
     NumericTableWidgetItem,
+    DARK_QSS,
 )
 from ui_builder import MainWindowUIBuilder
 
@@ -87,6 +88,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._workers = []
         self._download_meta = None
         self.playlist_title = ""
+        self.queue = []
 
         self._build_ui()
         self._load_settings_into_ui()
@@ -251,8 +253,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._set_status("در حال استخراج فرمت‌ها...")
         self.btn_fetch.setEnabled(False)
         self.table.setRowCount(0)
-        self.format_group.setVisible(True)
-        self.playlist_group.setVisible(False)
+        self.tabs.setCurrentIndex(0)  # تب دانلود
 
         self._spawn_thread(self._fetch_worker, (url,))
 
@@ -292,7 +293,6 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
     def _on_formats_ready(self, info: dict):
         self.current_info = info
         self.all_formats = self.downloader.parse_formats(info)
-        self.format_group.setVisible(True)
         self._apply_filter()
         self.btn_fetch.setEnabled(True)
         self._set_status(f"فرمت‌ها آماده شد ({len(self.all_formats)} مورد)")
@@ -379,8 +379,6 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._set_status("در حال استخراج پلی‌لیست...")
         self.btn_fetch.setEnabled(False)
         self.playlist_table.setRowCount(0)
-        # مخفی کردن جدول فرمت‌های تک‌ویدئو تا فرم بزرگ نشود
-        self.format_group.setVisible(False)
         self._spawn_thread(self._playlist_fetch_worker, (url,))
 
     def _playlist_fetch_worker(self, url):
@@ -413,7 +411,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             f"🎵 {info.get('title', 'پلی‌لیست')} — {count} ویدئو"
         )
         self._fill_playlist_table(self.playlist_items)
-        self.playlist_group.setVisible(True)
+        self.tabs.setCurrentIndex(1)  # تب پلی‌لیست
         self.btn_fetch.setEnabled(True)
         self.btn_pl_download.setEnabled(True)
         self._set_status(f"پلی‌لیست آماده شد ({count} ویدئو)")
@@ -694,7 +692,38 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self.playlist_quality_combo.setEnabled(not checked)
             self._refresh_playlist_sizes()
 
+    def _build_task(self) -> dict:
+        """ساخت دیکشنری تسک از وضعیت فعلی UI"""
+        url = self.url_input.text().strip()
+        output_dir = self.path_input.text().strip()
+        fmt = self._resolve_format()
+        audio_only = self.audio_only_check.isChecked()
+        browser, cookie_file = self._current_cookie()
+        proxy = self._current_proxy()
+        subtitle_langs, subtitle_auto = self._current_subtitles()
+        retries = int(self.retries_spin.value())
+        audio_fmt = self.audio_format_combo.currentText()
+        title = self.current_info.get("title", "?") if self.current_info else "?"
+        return {
+            "title": title, "url": url, "output_dir": output_dir, "fmt": fmt,
+            "browser": browser, "cookie_file": cookie_file, "retries": retries,
+            "audio_only": audio_only, "audio_fmt": audio_fmt, "proxy": proxy,
+            "subtitle_langs": subtitle_langs, "subtitle_auto": subtitle_auto,
+        }
+
+    def _start_task(self, task: dict):
+        """شروع دانلود یک تسک"""
+        self._download_meta = {"title": task["title"], "format": task["fmt"], "type": "video"}
+        self.is_downloading = True
+        self.btn_download.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_fetch.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self._set_status(f"در حال دانلود: {task['title']}...")
+        self._spawn_thread(self._download_worker, (task,))
+
     def _start_download(self):
+        """شروع دانلود فوری (تک‌ویدئو)"""
         url = self.url_input.text().strip()
         if not url or not YOUTUBE_URL_RE.match(url):
             QMessageBox.warning(self, "خطا", "لطفاً یک لینک معتبر یوتیوب وارد کنید.")
@@ -705,58 +734,74 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است.")
             return
 
-        fmt = self._resolve_format()
-        audio_only = self.audio_only_check.isChecked()
+        task = self._build_task()
+        self._append_log(f"[info] Format selector: {task['fmt']}")
+        self._start_task(task)
 
-        self._append_log(f"[info] Format selector: {fmt}")
+    def _enqueue_current(self):
+        """افزودن تسک فعلی به صف دانلود"""
+        url = self.url_input.text().strip()
+        if not url or not YOUTUBE_URL_RE.match(url):
+            QMessageBox.warning(self, "خطا", "لطفاً یک لینک معتبر یوتیوب وارد کنید.")
+            return
 
-        self.is_downloading = True
-        self.btn_download.setEnabled(False)
-        self.btn_cancel.setEnabled(True)
-        self.btn_fetch.setEnabled(False)
-        self.progress_bar.setValue(0)
-        self._set_status("در حال دانلود...")
+        output_dir = self.path_input.text().strip()
+        if not output_dir or not Path(output_dir).is_dir():
+            QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است.")
+            return
 
-        browser, cookie_file = self._current_cookie()
-        proxy = self._current_proxy()
-        subtitle_langs, subtitle_auto = self._current_subtitles()
+        task = self._build_task()
+        self.queue.append(task)
+        self._refresh_queue_ui()
+        self._append_log(f"[info] ➕ به صف اضافه شد: {task['title']} ({len(self.queue)} مورد)")
+        self._process_queue()
 
-        retries = int(self.retries_spin.value())
-        audio_fmt = self.audio_format_combo.currentText()
+    def _process_queue(self):
+        """پردازش صف: اگر بیکار و صف خالی نبود، مورد بعدی را شروع کن"""
+        if self.is_downloading or not self.queue:
+            return
+        task = self.queue.pop(0)
+        self._refresh_queue_ui()
+        self._append_log(f"[info] ⏬ شروع دانلود از صف: {task['title']}")
+        self._start_task(task)
 
-        title = self.current_info.get("title", "?") if self.current_info else "?"
-        self._download_meta = {
-            "title": title,
-            "format": fmt,
-            "type": "video",
-        }
+    def _refresh_queue_ui(self):
+        """به‌روزرسانی نمایش لیست صف"""
+        if not hasattr(self, "queue_list"):
+            return
+        self.queue_list.clear()
+        for i, task in enumerate(self.queue, 1):
+            self.queue_list.addItem(f"{i}. {task['title']} — {task['fmt']}")
 
-        self._spawn_thread(
-            self._download_worker,
-            (url, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
-             proxy, subtitle_langs, subtitle_auto),
-        )
+    def _remove_selected_from_queue(self):
+        """حذف مورد انتخاب‌شده از صف"""
+        if not hasattr(self, "queue_list"):
+            return
+        row = self.queue_list.currentRow()
+        if 0 <= row < len(self.queue):
+            removed = self.queue.pop(row)
+            self._refresh_queue_ui()
+            self._append_log(f"[info] 🗑️ از صف حذف شد: {removed['title']}")
 
-    def _download_worker(self, url, output_dir, fmt, browser, cookie_file,
-                        retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto):
+    def _download_worker(self, task):
         try:
             self.downloader.download(
-                url=url,
-                output_dir=output_dir,
-                format_selector=fmt,
-                cookie_browser=browser,
-                cookie_file=cookie_file,
-                retries=retries,
-                audio_only=audio_only,
-                audio_format=audio_fmt,
+                url=task["url"],
+                output_dir=task["output_dir"],
+                format_selector=task["fmt"],
+                cookie_browser=task["browser"],
+                cookie_file=task["cookie_file"],
+                retries=task["retries"],
+                audio_only=task["audio_only"],
+                audio_format=task["audio_fmt"],
                 progress_callback=lambda d: self.signals.progress.emit(d),
                 log_callback=lambda m: self.signals.log.emit(m),
                 postprocessor_callback=lambda p: self.signals.status.emit(
                     f"پس‌پردازش: {p}"
                 ),
-                proxy=proxy,
-                subtitle_langs=subtitle_langs,
-                subtitle_auto=subtitle_auto,
+                proxy=task["proxy"],
+                subtitle_langs=task["subtitle_langs"],
+                subtitle_auto=task["subtitle_auto"],
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -769,6 +814,11 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self.downloader.cancel()
             self._append_log("[warning] درخواست لغو دانلود ارسال شد...")
             self.btn_cancel.setEnabled(False)
+            # لغو کامل: صف را هم خالی کن
+            if self.queue:
+                self.queue.clear()
+                self._refresh_queue_ui()
+                self._append_log("[warning] صف دانلود نیز پاک شد.")
 
     # ================= هندلرها =================
     def _on_progress(self, d: dict):
@@ -813,7 +863,11 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._set_status("✅ دانلود با موفقیت انجام شد.")
         self._append_log("[info] دانلود با موفقیت به پایان رسید.")
         self._record_history()
-        QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
+        if self.queue:
+            # موردهای بیشتری در صف است — بدون دیالوگ ادامه بده
+            self._process_queue()
+        else:
+            QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
 
     def _on_error(self, msg: str):
         self.is_downloading = False
@@ -823,7 +877,11 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.btn_pl_download.setEnabled(bool(self.playlist_items))
         self._set_status(f"❌ خطا: {msg}")
         self._append_log(f"[error] {msg}")
-        QMessageBox.critical(self, "خطا", msg)
+        if self.queue:
+            # ادامه صف با وجود خطا (خطا لاگ شده است)
+            self._process_queue()
+        else:
+            QMessageBox.critical(self, "خطا", msg)
 
     def _append_log(self, msg: str):
         self.log_box.append(msg)
@@ -912,6 +970,7 @@ def run_app():
     _setup_file_logging()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setStyleSheet(DARK_QSS)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
