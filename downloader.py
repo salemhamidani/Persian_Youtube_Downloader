@@ -97,9 +97,10 @@ class YouTubeDownloader:
             },
 
             # ⚡ استفاده از کلاینت‌های web برای سازگاری با کوکی‌ها
+            # default: زیرنویس را درست دانلود می‌کند، web_safari: ویدئوی باکیفیت (HLS)
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web", "web_safari"],
+                    "player_client": ["default", "web_safari"],
                 }
             },
         }
@@ -262,6 +263,8 @@ class YouTubeDownloader:
         log_callback: Optional[Callable[[str], None]] = None,
         postprocessor_callback: Optional[Callable[[str], None]] = None,
         proxy: Optional[str] = None,
+        subtitle_langs: Optional[str] = None,
+        subtitle_auto: bool = False,
     ):
         """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
         self._reset()
@@ -281,6 +284,17 @@ class YouTubeDownloader:
                 }
             ]
 
+        if subtitle_langs or subtitle_auto:
+            opts["subtitlesformat"] = "srt"
+            if subtitle_langs:
+                langs = [l.strip() for l in subtitle_langs.split(",") if l.strip()]
+                opts["subtitleslangs"] = langs or ["all"]
+            else:
+                opts["subtitleslangs"] = ["all"]
+            # هم زیرنویس دستی و هم خودکار را بنویس (اکثر ویدئوها فقط زیرنویس خودکار دارند)
+            opts["writesubtitles"] = True
+            opts["writeautomaticsub"] = True
+
         def _progress_hook(d):
             if self.cancel_flag.is_set():
                 raise DownloadCancelled("دانلود توسط کاربر لغو شد")
@@ -296,6 +310,25 @@ class YouTubeDownloader:
 
         opts["logger"] = _YdlLogger(log_callback)
 
+        try:
+            self._run_download(opts, url)
+        except DownloadCancelled:
+            raise
+        except Exception:
+            # اگر زیرنویس فعال بود، خطا ممکن است از زیرنویس باشد؛
+            # بدون زیرنویس دوباره تلاش کن تا ویدئو همچنان دانلود شود
+            if subtitle_langs or subtitle_auto:
+                if log_callback:
+                    log_callback("[warning] دانلود زیرنویس ناموفق بود — ویدئو بدون زیرنویس دانلود می‌شود.")
+                self._reset()
+                for k in ("writesubtitles", "writeautomaticsub", "subtitleslangs", "subtitlesformat"):
+                    opts.pop(k, None)
+                self._run_download(opts, url)
+            else:
+                raise
+
+    def _run_download(self, opts: dict, url: str):
+        """اجرای دانلود با یک YoutubeDL و مدیریت لغو"""
         with yt_dlp.YoutubeDL(opts) as ydl:
             self.current_ydl = ydl
             try:

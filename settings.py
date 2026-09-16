@@ -21,6 +21,10 @@ class SettingsManager:
             "proxy_host": "",
             "proxy_port": 8080,
             "proxy_proto": "http",
+            "subtitle_enabled": False,
+            "subtitle_langs": "fa,en",
+            "subtitle_auto": False,
+            "history": [],
         }
         self.data = self.load()
 
@@ -63,3 +67,14 @@ class SettingsManager:
     def set(self, key, value):
         self.data[key] = value
         self.save()
+
+    def add_history(self, record: dict):
+        """افزودن یک رکورد به تاریخچه دانلود (جدیدترین اول، حداکثر ۵۰۰ مورد)"""
+        history = self.data.setdefault("history", [])
+        history.insert(0, record)
+        del history[500:]
+        self.save()
+
+    def get_history(self) -> list:
+        """بازگرداندن تاریخچه دانلود"""
+        return self.data.get("history", [])

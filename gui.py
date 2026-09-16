@@ -102,12 +102,15 @@ class MainWindow(QMainWindow):
         self.playlist_sizes = {}
         self._size_gen = 0
         self._workers = []
+        self._download_meta = None
+        self.playlist_title = ""
 
         self._build_ui()
         self._load_settings_into_ui()
         self._detect_clipboard_url()
         self._detect_browsers()
         self._check_external_tools()
+        self._load_history()
 
     # ================= ساخت UI =================
     def _build_ui(self):
@@ -358,6 +361,16 @@ class MainWindow(QMainWindow):
         self.audio_format_combo.setEnabled(False)
         bottom_layout.addWidget(self.audio_format_combo, 1, 3)
 
+        # زیرنویس
+        bottom_layout.addWidget(QLabel("زیرنویس:"), 2, 0)
+        self.subtitle_check = QCheckBox("دانلود")
+        bottom_layout.addWidget(self.subtitle_check, 2, 1)
+        self.subtitle_langs = QLineEdit()
+        self.subtitle_langs.setPlaceholderText("زبان‌ها (fa,en یا all)")
+        bottom_layout.addWidget(self.subtitle_langs, 2, 2)
+        self.subtitle_auto_check = QCheckBox("خودکار")
+        bottom_layout.addWidget(self.subtitle_auto_check, 2, 3)
+
         btn_layout = QHBoxLayout()
         self.btn_download = QPushButton("⬇️ شروع دانلود")
         self.btn_download.setMinimumHeight(38)
@@ -382,7 +395,7 @@ class MainWindow(QMainWindow):
         self.btn_clear_log.clicked.connect(lambda: self.log_box.clear())
         btn_layout.addWidget(self.btn_clear_log, 1)
 
-        bottom_layout.addLayout(btn_layout, 2, 0, 1, 4)
+        bottom_layout.addLayout(btn_layout, 3, 0, 1, 4)
 
         main_layout.addWidget(bottom_group)
 
@@ -417,6 +430,32 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(progress_group)
 
+        # ---- گروه تاریخچه ----
+        history_group = QGroupBox("📜 تاریخچه دانلود")
+        history_layout = QVBoxLayout(history_group)
+        self.history_table = QTableWidget(0, 4)
+        self.history_table.setHorizontalHeaderLabels(["عنوان", "تاریخ", "کیفیت", "نوع"])
+        self.history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.history_table.setAlternatingRowColors(True)
+        self.history_table.verticalHeader().setVisible(False)
+        self.history_table.setMinimumHeight(160)
+        hh = self.history_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.history_table.setColumnWidth(1, 140)
+        self.history_table.setColumnWidth(2, 140)
+        self.history_table.setColumnWidth(3, 80)
+        history_layout.addWidget(self.history_table)
+        hist_btn = QHBoxLayout()
+        self.btn_clear_history = QPushButton("🗑️ پاک کردن تاریخچه")
+        self.btn_clear_history.clicked.connect(self._clear_history)
+        hist_btn.addStretch()
+        hist_btn.addWidget(self.btn_clear_history)
+        history_layout.addLayout(hist_btn)
+        main_layout.addWidget(history_group)
+
         # ⚡ فضای انتهایی برای فاصله مناسب
         main_layout.addStretch(1)
 
@@ -442,6 +481,10 @@ class MainWindow(QMainWindow):
         idx = self.proxy_proto.findText(proto)
         if idx >= 0:
             self.proxy_proto.setCurrentIndex(idx)
+
+        self.subtitle_check.setChecked(bool(self.settings.get("subtitle_enabled", False)))
+        self.subtitle_langs.setText(self.settings.get("subtitle_langs", "fa,en"))
+        self.subtitle_auto_check.setChecked(bool(self.settings.get("subtitle_auto", False)))
 
     # ================= Clipboard =================
     def _detect_clipboard_url(self):
@@ -511,6 +554,18 @@ class MainWindow(QMainWindow):
             self._append_log("[info] 🚀 aria2c یافت شد — دانلود موازی فعال است.")
         else:
             self._append_log("[info] ℹ️ aria2c یافت نشد (اختیاری — برای سرعت بیشتر نصب کنید).")
+
+        node = shutil.which("node")
+        if not node:
+            self._append_log("[warning] ⚠️ Node.js یافت نشد — دانلود زیرنویس کار نمی‌کند.")
+            QMessageBox.warning(
+                self, "Node.js یافت نشد",
+                "Node.js روی سیستم نصب نیست.\n\n"
+                "برای دانلود زیرنویس (تولید PO Token) به Node.js نسخه ۲۲ یا بالاتر نیاز دارید.\n\n"
+                "دانلود و نصب از: https://nodejs.org",
+            )
+        else:
+            self._append_log("[info] ✅ Node.js یافت شد — دانلود زیرنویس فعال است.")
 
     def _toggle_cookie_mode(self):
         use_browser = self.radio_browser.isChecked()
@@ -644,6 +699,13 @@ class MainWindow(QMainWindow):
         port = self.proxy_port.value()
         return f"{proto}://{host}:{port}"
 
+    def _current_subtitles(self):
+        """بازگرداندن تنظیمات زیرنویس: (زبان‌ها یا None، خودکار)"""
+        if not self.subtitle_check.isChecked():
+            return None, False
+        langs = self.subtitle_langs.text().strip() or "all"
+        return langs, self.subtitle_auto_check.isChecked()
+
     def _spawn_thread(self, target, args=()):
         """شروع thread و ردیابی آن برای بستن ایمن"""
         self._workers = [t for t in self._workers if t.is_alive()]
@@ -704,6 +766,7 @@ class MainWindow(QMainWindow):
 
     def _on_playlist_ready(self, info: dict):
         self.playlist_items = info.get("entries", [])
+        self.playlist_title = info.get("title", "") or "پلی‌لیست"
         self.playlist_sizes = {}
         self._size_gen += 1
         count = len(self.playlist_items)
@@ -828,8 +891,16 @@ class MainWindow(QMainWindow):
         audio_only = self.audio_only_check.isChecked()
         browser, cookie_file = self._current_cookie()
         proxy = self._current_proxy()
+        subtitle_langs, subtitle_auto = self._current_subtitles()
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
+
+        quality_label = self.playlist_quality_combo.currentText()
+        self._download_meta = {
+            "title": f"{self.playlist_title} ({len(selected)} ویدئو)",
+            "format": quality_label,
+            "type": "playlist",
+        }
 
         self.is_downloading = True
         self.btn_download.setEnabled(False)
@@ -841,11 +912,12 @@ class MainWindow(QMainWindow):
 
         self._spawn_thread(
             self._playlist_download_worker,
-            (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt, proxy),
+            (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
+             proxy, subtitle_langs, subtitle_auto),
         )
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
-                                  retries, audio_only, audio_fmt, proxy):
+                                  retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto):
         total = len(videos)
         for i, v in enumerate(videos, 1):
             if self.downloader.cancel_flag.is_set():
@@ -870,6 +942,8 @@ class MainWindow(QMainWindow):
                         f"پس‌پردازش: {p}"
                     ),
                     proxy=proxy,
+                    subtitle_langs=subtitle_langs,
+                    subtitle_auto=subtitle_auto,
                 )
                 self.signals.log.emit(f"[info] ✅ ({i}/{total}) تمام شد: {title}")
             except DownloadCancelled:
@@ -1006,17 +1080,26 @@ class MainWindow(QMainWindow):
 
         browser, cookie_file = self._current_cookie()
         proxy = self._current_proxy()
+        subtitle_langs, subtitle_auto = self._current_subtitles()
 
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
 
+        title = self.current_info.get("title", "?") if self.current_info else "?"
+        self._download_meta = {
+            "title": title,
+            "format": fmt,
+            "type": "video",
+        }
+
         self._spawn_thread(
             self._download_worker,
-            (url, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt, proxy),
+            (url, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
+             proxy, subtitle_langs, subtitle_auto),
         )
 
     def _download_worker(self, url, output_dir, fmt, browser, cookie_file,
-                        retries, audio_only, audio_fmt, proxy):
+                        retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto):
         try:
             self.downloader.download(
                 url=url,
@@ -1033,6 +1116,8 @@ class MainWindow(QMainWindow):
                     f"پس‌پردازش: {p}"
                 ),
                 proxy=proxy,
+                subtitle_langs=subtitle_langs,
+                subtitle_auto=subtitle_auto,
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -1088,6 +1173,7 @@ class MainWindow(QMainWindow):
         self.btn_pl_download.setEnabled(bool(self.playlist_items))
         self._set_status("✅ دانلود با موفقیت انجام شد.")
         self._append_log("[info] دانلود با موفقیت به پایان رسید.")
+        self._record_history()
         QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
 
     def _on_error(self, msg: str):
@@ -1109,6 +1195,45 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"وضعیت: {msg}")
         self.statusBar().showMessage(msg)
 
+    # ================= تاریخچه =================
+    def _load_history(self):
+        self._refresh_history_table()
+
+    def _refresh_history_table(self):
+        history = self.settings.get_history()
+        self.history_table.setRowCount(len(history))
+        for row, rec in enumerate(history):
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(rec.get("title", ""))))
+            self.history_table.setItem(row, 1, QTableWidgetItem(str(rec.get("date", ""))))
+            self.history_table.setItem(row, 2, QTableWidgetItem(str(rec.get("format", ""))))
+            self.history_table.setItem(row, 3, QTableWidgetItem(str(rec.get("type", ""))))
+
+    def _clear_history(self):
+        ret = QMessageBox.question(
+            self, "پاک کردن تاریخچه",
+            "آیا مطمئن هستید که تاریخچه دانلود پاک شود؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret == QMessageBox.StandardButton.Yes:
+            self.settings.set("history", [])
+            self._refresh_history_table()
+            self._append_log("[info] تاریخچه دانلود پاک شد.")
+
+    def _record_history(self):
+        meta = self._download_meta
+        if not meta:
+            return
+        from datetime import datetime
+        self.settings.add_history({
+            "title": meta.get("title", "?"),
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "format": meta.get("format", ""),
+            "type": meta.get("type", "video"),
+        })
+        self._refresh_history_table()
+        self._download_meta = None
+
     # ================= ذخیره تنظیمات در بستن =================
     def _save_settings(self):
         self.settings.set("download_path", self.path_input.text())
@@ -1120,6 +1245,9 @@ class MainWindow(QMainWindow):
         self.settings.set("proxy_host", self.proxy_host.text().strip())
         self.settings.set("proxy_port", int(self.proxy_port.value()))
         self.settings.set("proxy_proto", self.proxy_proto.currentText())
+        self.settings.set("subtitle_enabled", self.subtitle_check.isChecked())
+        self.settings.set("subtitle_langs", self.subtitle_langs.text().strip())
+        self.settings.set("subtitle_auto", self.subtitle_auto_check.isChecked())
 
     def closeEvent(self, event):
         if self.is_downloading:
