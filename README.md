@@ -46,6 +46,12 @@
 | 🍪 **پشتیبانی کوکی** | Cookie support | کوکی مرورگر (Chrome/Firefox/Edge/…) یا فایل `cookies.txt` |
 | ⚡ **سرعت بالا** | High-speed download | دانلود همزمان ۸ قطعه + چانک ۱۰MB + دانلودر خارجی `aria2c` |
 | 📊 **پیشرفت زنده** | Live progress | سرعت، زمان باقی‌مانده، حجم و لاگ لحظه‌ای |
+| 🎵 **دانلود پلی‌لیست** | Playlist download | استخراج لیست ویدئوها، انتخاب تکی/گروهی و دانلود انتخابی |
+| 🎚️ **انتخاب کیفیت پلی‌لیست** | Playlist quality | انتخاب کیفیت (4K/1440p/1080p/720p/…) برای همه ویدئوها |
+| 📏 **حجم هر ویدئو** | Per-video size | نمایش حجم تقریبی/واقعی هر ویدئو برای کیفیت انتخابی |
+| 💬 **دانلود زیرنویس** | Subtitle download | زیرنویس دستی + خودکار با انتخاب زبان (نیازمند PO Token) |
+| 📜 **تاریخچه دانلود** | Download history | ثبت خودکار دانلودهای انجام‌شده + پاک‌کردن |
+| 🌐 **پشتیبانی پراکسی** | Proxy support | پروکسی `http` / `socks5` / `socks4` / `https` |
 | 🖱️ **رابط راست‌به‌چپ** | RTL interface | کاملاً فارسی با چیدمان راست‌به‌چپ |
 
 ---
@@ -67,6 +73,7 @@
 | **yt-dlp** | 2026.8+ | ✅ بله | موتور دانلود |
 | **PyQt6** | 6.11+ | ✅ بله | رابط گرافیکی |
 | **FFmpeg** | — | ✅ بله | استخراج صدا و ادغام ویدئو/صدا |
+| **Node.js** | 22+ | ✅ برای زیرنویس | تولید PO Token (دانلود زیرنویس) |
 | **aria2c** | — | ⭕ اختیاری | دانلود موازی سریع‌تر |
 
 > ⚠️ **FFmpeg ضروری است.** برای دانلود صدا (mp3) و ادغام ویدئو+صدا به FFmpeg نیاز دارید. راهنمای نصب:
@@ -80,6 +87,56 @@
 > # مک
 > brew install ffmpeg
 > ```
+
+---
+
+## 🔑 راه‌اندازی PO Token Provider | PO Token Provider Setup
+
+> 📌 **چرا لازم است؟** از سال ۲۰۲۶ یوتیوب برای دانلود زیرنویس به «PO Token» نیاز دارد. بدون آن، دانلود زیرنویس با خطای `Did not get any data blocks` مواجه می‌شود. این راه‌نما را **یک‌بار** انجام دهید.
+
+### ۱) نصب Node.js (الزامی برای زیرنویس)
+
+اگر Node.js نسخه **۲۲ یا بالاتر** نصب نباشد، برنامه هنگام اجرا پیام هشدار نشان می‌دهد.
+
+```bash
+# ویندوز (با winget)
+winget install OpenJS.NodeJS.LTS
+```
+
+### ۲) نصب وابستگی‌های Python
+
+```bash
+pip install -r requirements.txt
+# شامل: curl_cffi (Impersonation) + bgutil-ytdlp-pot-provider (PO Token)
+```
+
+### ۳) راه‌اندازی سرور PO Token
+
+```bash
+# کلون ریپو (نسخه 2.0.0) در پوشه خانگی
+git clone --single-branch --branch 2.0.0 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git ~/bgutil-ytdlp-pot-provider
+cd ~/bgutil-ytdlp-pot-provider/server
+
+# بیلد اسکریپت تولید توکن (با Node.js)
+npm ci
+npx tsc
+```
+
+### ۴) اجبار استفاده از Node.js (اختیاری)
+
+اگر هم Node.js و هم Deno نصب باشند، Deno اولویت می‌گیرد و ممکن است خطا بدهد. برای استفاده از Node.js:
+
+```bash
+mv src/generate_once.ts src/generate_once.ts.disabled
+```
+
+### ۵) تست
+
+```bash
+yt-dlp --write-auto-subs --sub-langs en --skip-download "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+اگر فایل `.srt` ساخته شد، PO Token درست کار می‌کند. ✅
 
 ---
 
@@ -131,6 +188,24 @@ python main.py
 
 > 💡 **نکته:** برای دانلود فقط صدا، تیک «فقط صدا (استخراج با FFmpeg)» را بزنید و قالب دلخواه (mp3 و…) را انتخاب کنید.
 
+### 🎵 دانلود پلی‌لیست
+
+1. لینک پلی‌لیست (مثل `youtube.com/playlist?list=...` یا `watch?v=...&list=...`) را وارد کنید.
+2. روی «استخراج فرمت‌ها» بزنید — لیست ویدئوها با حجم تقریبی نمایش داده می‌شود.
+3. **کیفیت دلخواه** را از کامبو انتخاب کنید.
+4. ویدئو(های) موردنظر را **تیک** بزنید (یا «انتخاب همه»).
+5. روی «دانلود انتخاب‌شده» بزنید.
+
+> 📏 حجم هر ویدئو بر اساس کیفیت انتخابی به‌صورت تدریجی محاسبه و نمایش داده می‌شود.
+
+### 💬 دانلود زیرنویس
+
+1. در بخش «ذخیره‌سازی و دانلود»، تیک **«زیرنویس → دانلود»** را بزنید.
+2. زبان‌ها را وارد کنید (مثلاً `fa,en` یا `all`).
+3. اگر زیرنویس فقط خودکار است، تیک «خودکار» را هم بزنید.
+
+> ⚠️ زیرنویس نیازمند راه‌اندازی **PO Token Provider** است (بخش بالا). اگر Node.js نصب نباشد، برنامه هشدار می‌دهد.
+
 ---
 
 ## 📁 ساختار پروژه | Project Structure
@@ -138,22 +213,25 @@ python main.py
 ```
 Persian_Youtube_Downloader/
 ├── main.py           → نقطه ورود برنامه (entry point)
-├── gui.py            → رابط کاربری گرافیکی (PyQt6) + مدیریت thread ها
-├── downloader.py     → منطق دانلود و استخراج فرمت‌ها (yt-dlp)
+├── gui.py            → رابط کاربری گرافیکی (PyQt6)
+├── downloader.py     → منطق دانلود، زیرنویس و استخراج فرمت‌ها (yt-dlp)
 ├── cookies.py        → شناسایی مرورگرها و مدیریت فایل کوکی
-├── settings.py       → ذخیره/بازیابی تنظیمات کاربر (JSON)
-├── requirements.txt  → وابستگی‌های پروژه
-├── .gitignore        → فایل‌های نادیده‌گرفته‌شده (شامل کوکی‌ها)
-└── مستند-پروژه.md     → مستند کامل تحلیل و نقاط ضعف/بهبود
+├── settings.py       → ذخیره/بازیابی تنظیمات و تاریخچه (JSON)
+├── requirements.txt  → وابستگی‌های پروژه (شامل PO Token)
+├── README.md         → مستند پروژه (فارسی/انگلیسی)
+├── LICENSE           → مجوز MIT
+├── docs/
+│   └── screenshot.png → اسکرین‌شات برنامه
+└── .gitignore        → فایل‌های نادیده‌گرفته‌شده (شامل کوکی‌ها)
 ```
 
 | فایل | File | مسئولیت |
 |------|------|---------|
 | `main.py` | entry point | اجرای برنامه |
-| `gui.py` | UI (711 خط) | پنجره اصلی، جدول فرمت‌ها، پیشرفت زنده |
-| `downloader.py` | download engine | ساخت پارامترهای yt-dlp، دانلود، پارس فرمت‌ها |
+| `gui.py` | UI (PyQt6) | پنجره اصلی، جدول فرمت‌ها، پلی‌لیست، تاریخچه |
+| `downloader.py` | download engine | ساخت پارامترهای yt-dlp، دانلود، زیرنویس، پارس فرمت‌ها |
 | `cookies.py` | cookie manager | تشخیص مرورگر، اعتبارسنجی کوکی |
-| `settings.py` | settings | ذخیره تنظیمات در `~/.youtube_downloader/config.json` |
+| `settings.py` | settings | ذخیره تنظیمات و تاریخچه در `~/.youtube_downloader/config.json` |
 
 ---
 
@@ -177,6 +255,8 @@ Persian_Youtube_Downloader/
 | دانلود کند | slow download | `aria2c` را نصب کنید تا دانلود موازی فعال شود |
 | خطای کوکی | cookie error | مرورگر را ببندید یا از فایل `cookies.txt` تازه استفاده کنید |
 | فرمت نمایش داده نمی‌شود | formats not shown | از کوکی معتبر استفاده کنید (YouTube محدودیت اعمال می‌کند) |
+| «Did not get any data blocks» در زیرنویس | subtitle PO token error | PO Token Provider را راه‌اندازی کنید (بخش راه‌اندازی PO Token) |
+| ویدئو بدون زیرنویس دانلود شد | video without subtitle | تیک «خودکار» را بزنید (اکثر ویدئوها فقط زیرنویس خودکار دارند) |
 
 ---
 
