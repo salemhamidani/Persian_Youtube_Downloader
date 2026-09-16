@@ -36,7 +36,6 @@ config.json
 # === خروجی PyInstaller ===
 build/
 dist/
-*.spec
 *.manifest
 
 # === IDE و ادیتورها ===

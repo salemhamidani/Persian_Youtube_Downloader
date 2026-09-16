@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -6,6 +7,26 @@ from typing import Callable, Optional
 import yt_dlp
 
 from cookies import CookieManager
+
+
+def _find_ffmpeg_location() -> Optional[str]:
+    """پیدا کردن پوشه‌ای که ffmpeg باندل‌شده (PyInstaller) در آن است.
+
+    در حالت عادی None برمی‌گرداند (از PATH سیستم استفاده می‌شود).
+    در حالت باندل‌شده، مسیر ffmpeg همراه exe را برمی‌گرداند.
+    """
+    if not getattr(sys, "frozen", False):
+        return None  # اجرای عادی — از PATH سیستم استفاده کن
+    candidates = []
+    if hasattr(sys, "_MEIPASS"):  # حالت onefile
+        candidates.append(sys._MEIPASS)
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    candidates.append(exe_dir)                      # ffmpeg کنار exe
+    candidates.append(os.path.join(exe_dir, "_internal"))  # حالت onedir
+    for c in candidates:
+        if c and os.path.isfile(os.path.join(c, "ffmpeg.exe")):
+            return c
+    return None
 
 
 class DownloadCancelled(Exception):
@@ -151,6 +172,11 @@ class YouTubeDownloader:
             opts["proxy"] = proxy
             if not quiet:
                 print(f"[debug] proxy set to: {proxy}")
+
+        # ffmpeg باندل‌شده (در نسخه exe) — برای استخراج صدا و ادغام
+        ffmpeg_loc = _find_ffmpeg_location()
+        if ffmpeg_loc:
+            opts["ffmpeg_location"] = ffmpeg_loc
 
         return opts
 

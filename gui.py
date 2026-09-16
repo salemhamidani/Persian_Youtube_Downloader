@@ -167,8 +167,16 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
     def _check_external_tools(self):
         """بررسی وجود ffmpeg و aria2c در زمان اجرا"""
         import shutil
+        from downloader import _find_ffmpeg_location
+
+        bundled_dir = _find_ffmpeg_location()  # در نسخه exe، پوشه ابزارهای باندل‌شده
         ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg and bundled_dir:
+            ffmpeg = bundled_dir  # ffmpeg باندل‌شده
+
         aria2c = shutil.which("aria2c")
+        if not aria2c and bundled_dir and (Path(bundled_dir) / "aria2c.exe").is_file():
+            aria2c = str(Path(bundled_dir) / "aria2c.exe")
         if not ffmpeg:
             self._append_log(
                 "[warning] ⚠️ FFmpeg یافت نشد — دانلود صدا (mp3) و ادغام ویدئو+صدا کار نمی‌کند."
