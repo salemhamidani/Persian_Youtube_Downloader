@@ -57,20 +57,44 @@ def is_playlist_url(url: str) -> bool:
     return "/playlist" in u or "list=" in u
 
 
-# گزینه‌های کیفیت برای دانلود پلی‌لیست: (برچسب، selector یت-dlp، حداکثر ارتفاع یا 'audio')
+# گزینه‌های کیفیت دانلود: (برچسب، selector یت-dlp، حداکثر ارتفاع یا 'audio'، (کدک صدا, کیفیت) یا None)
+# 🎬 = ویدئو، 🎵 = فقط صدا
 QUALITY_OPTIONS = [
-    ("بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best", None),
-    ("2160p — 4K", "bestvideo[height<=2160]+bestaudio/best[height<=2160]", 2160),
-    ("1440p — 2K", "bestvideo[height<=1440]+bestaudio/best[height<=1440]", 1440),
-    ("1080p — Full HD", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", 1080),
-    ("720p — HD", "bestvideo[height<=720]+bestaudio/best[height<=720]", 720),
-    ("480p", "bestvideo[height<=480]+bestaudio/best[height<=480]", 480),
-    ("360p", "bestvideo[height<=360]+bestaudio/best[height<=360]", 360),
-    ("فقط صدا (بهترین)", "bestaudio/best", "audio"),
+    # ---- ویدئو ----
+    ("🎬 بهترین کیفیت (خودکار)", "bestvideo+bestaudio/best", None, None),
+    ("🎬 2160p — 4K", "bestvideo[height<=2160]+bestaudio/best[height<=2160]", 2160, None),
+    ("🎬 1440p — 2K", "bestvideo[height<=1440]+bestaudio/best[height<=1440]", 1440, None),
+    ("🎬 1080p — Full HD", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", 1080, None),
+    ("🎬 720p — HD", "bestvideo[height<=720]+bestaudio/best[height<=720]", 720, None),
+    ("🎬 480p", "bestvideo[height<=480]+bestaudio/best[height<=480]", 480, None),
+    ("🎬 360p", "bestvideo[height<=360]+bestaudio/best[height<=360]", 360, None),
+    # ---- فقط صدا (فرمت‌های مختلف) ----
+    ("🎵 فقط صدا — بهترین (بدون تبدیل)", "bestaudio/best", "audio", None),
+    ("🎵 فقط صدا — MP3 128 kbps", "bestaudio/best", "audio", ("mp3", "128")),
+    ("🎵 فقط صدا — MP3 192 kbps", "bestaudio/best", "audio", ("mp3", "192")),
+    ("🎵 فقط صدا — MP3 320 kbps", "bestaudio/best", "audio", ("mp3", "320")),
+    ("🎵 فقط صدا — M4A (AAC)", "bestaudio/best", "audio", ("m4a", "192")),
+    ("🎵 فقط صدا — Opus", "bestaudio/best", "audio", ("opus", None)),
+    ("🎵 فقط صدا — FLAC (بی‌اتلاف)", "bestaudio/best", "audio", ("flac", None)),
+    ("🎵 فقط صدا — WAV", "bestaudio/best", "audio", ("wav", None)),
 ]
 
+
+def quality_data(item_data):
+    """دادهٔ گزینهٔ کیفیت را به (selector, ارتفاع, کدک صدا) تبدیل می‌کند.
+
+    با هر دو قالب (رشتهٔ ساده یا tuple چهارتایی) سازگار است.
+    """
+    if isinstance(item_data, (tuple, list)):
+        sel = item_data[0] if len(item_data) > 0 else None
+        height = item_data[1] if len(item_data) > 1 else None
+        audio = item_data[2] if len(item_data) > 2 else None
+        return sel, height, audio
+    return item_data, None, None
+
+
 # نگاشت selector به ارتفاع برای برآورد حجم
-QUALITY_HEIGHT = {s: h for (_, s, h) in QUALITY_OPTIONS}
+QUALITY_HEIGHT = {s: h for (_label, s, h, _a) in QUALITY_OPTIONS}
 
 
 class NumericTableWidgetItem(QTableWidgetItem):

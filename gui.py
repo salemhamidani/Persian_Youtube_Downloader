@@ -96,8 +96,7 @@ class WorkerSignals(QObject):
 from ui_utils import (
     YOUTUBE_URL_RE,
     is_playlist_url,
-    QUALITY_OPTIONS,
-    QUALITY_HEIGHT,
+    quality_data,
     NumericTableWidgetItem,
     DARK_QSS,
     DONE_ROLE,
@@ -531,9 +530,15 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
 
     def _resolve_playlist_format(self) -> str:
         """تعیین selector کیفیت برای دانلود پلی‌لیست"""
+        sel, _height, _audio = quality_data(self.playlist_quality_combo.currentData())
         if self.audio_only_check.isChecked():
             return "bestaudio/best"
-        return self.playlist_quality_combo.currentData() or "bestvideo+bestaudio/best"
+        return sel or "bestvideo+bestaudio/best"
+
+    def _playlist_audio(self):
+        """(کدک صدا, کیفیت) اگر گزینهٔ صوتی پلی‌لیست انتخاب شده باشد، وگرنه None"""
+        _sel, _height, audio = quality_data(self.playlist_quality_combo.currentData())
+        return audio
 
     def _fetch_playlist(self, url):
         self._set_status("در حال استخراج پلی‌لیست...")
@@ -619,10 +624,10 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._update_row_size(idx)
 
     def _current_quality_height(self):
+        _sel, height, _audio = quality_data(self.playlist_quality_combo.currentData())
         if self.audio_only_check.isChecked():
             return "audio"
-        sel = self.playlist_quality_combo.currentData()
-        return QUALITY_HEIGHT.get(sel, None)
+        return height
 
     def _update_row_size(self, row):
         if row >= self.playlist_table.rowCount():
@@ -743,6 +748,14 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         subtitle_langs, subtitle_auto = self._current_subtitles()
         retries = int(self.retries_spin.value())
         audio_fmt = self.audio_format_combo.currentText()
+        audio_quality = "192"
+
+        # اگر گزینهٔ صوتی از لیست کیفیت پلی‌لیست انتخاب شده باشد، همان اعمال شود
+        pl_audio = self._playlist_audio()
+        if pl_audio is not None:
+            audio_only = True
+            audio_fmt = pl_audio[0]
+            audio_quality = pl_audio[1] or "192"
 
         quality_label = self.playlist_quality_combo.currentText()
         self._download_meta = {
@@ -765,12 +778,12 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self._playlist_download_worker,
             (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
              proxy, subtitle_langs, subtitle_auto, self._current_rate_limit(),
-             self.resume_check.isChecked(), self._current_use_aria2c()),
+             self.resume_check.isChecked(), self._current_use_aria2c(), audio_quality),
         )
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
                                   retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto,
-                                  rate_limit=0, resume=True, use_aria2c=True):
+                                  rate_limit=0, resume=True, use_aria2c=True, audio_quality="192"):
         total = len(videos)
         success = 0
         failed = 0
@@ -786,6 +799,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 retries=retries,
                 audio_only=audio_only,
                 audio_format=audio_fmt,
+                audio_quality=audio_quality,
                 progress_callback=lambda d: self.signals.progress.emit(d),
                 log_callback=lambda m: self.signals.log.emit(m),
                 postprocessor_callback=lambda p: self.signals.status.emit(

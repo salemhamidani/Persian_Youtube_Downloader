@@ -391,6 +391,7 @@ class YouTubeDownloader:
         retries: int = 5,
         audio_only: bool = False,
         audio_format: str = "mp3",
+        audio_quality: str = "192",
         progress_callback: Optional[Callable[[dict], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         postprocessor_callback: Optional[Callable[[str], None]] = None,
@@ -418,7 +419,7 @@ class YouTubeDownloader:
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": audio_format,
-                    "preferredquality": "192",
+                    "preferredquality": str(audio_quality or "192"),
                 }
             ]
 

@@ -448,9 +448,10 @@ class MainWindowUIBuilder:
         q_layout = QHBoxLayout()
         q_layout.addWidget(QLabel("کیفیت دانلود:"))
         self.playlist_quality_combo = QComboBox()
-        for label, selector, _height in QUALITY_OPTIONS:
-            self.playlist_quality_combo.addItem(label, selector)
+        for label, selector, height, audio in QUALITY_OPTIONS:
+            self.playlist_quality_combo.addItem(label, (selector, height, audio))
         self.playlist_quality_combo.currentIndexChanged.connect(self._refresh_playlist_sizes)
+        self.playlist_quality_combo.setMinimumWidth(240)
         q_layout.addWidget(self.playlist_quality_combo)
 
         q_layout.addWidget(QLabel("🔍 جستجو:"))
