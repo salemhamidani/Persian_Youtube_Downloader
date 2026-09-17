@@ -6,8 +6,8 @@ from logging.handlers import RotatingFileHandler
 import pyperclip
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QBrush, QColor
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QObject
+from PyQt6.QtGui import QIcon, QBrush, QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget,
@@ -15,9 +15,17 @@ from PyQt6.QtWidgets import (
     QGroupBox, QGridLayout, QMessageBox, QHeaderView, QCheckBox,
     QSpinBox, QStatusBar, QAbstractItemView, QRadioButton,
     QButtonGroup, QScrollArea, QFrame, QSizePolicy,
+    QSystemTrayIcon, QMenu,
 )
 
-from downloader import YouTubeDownloader, DownloadCancelled
+from downloader import (
+    YouTubeDownloader,
+    DownloadCancelled,
+    friendly_error,
+    installed_ytdlp_version,
+    latest_ytdlp_version,
+    is_newer_version,
+)
 from cookies import CookieManager
 from settings import SettingsManager
 from version import __version__
@@ -78,6 +86,7 @@ class WorkerSignals(QObject):
     playlist_ready = pyqtSignal(dict)
     playlist_size = pyqtSignal(dict)
     playlist_item_done = pyqtSignal(int)
+    update_checked = pyqtSignal(str, str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -115,6 +124,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.signals.playlist_ready.connect(self._on_playlist_ready)
         self.signals.playlist_size.connect(self._on_playlist_size)
         self.signals.playlist_item_done.connect(self._on_playlist_item_done)
+        self.signals.update_checked.connect(self._on_update_checked)
         self.signals.finished.connect(self._on_finished)
         self.signals.error.connect(self._on_error)
         self.signals.status.connect(self._set_status)
@@ -135,12 +145,15 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._taskbar_progress = None
         self._taskbar_initialized = False
 
+        self.tray = None
         self._build_ui()
+        self._setup_tray()
         self._load_settings_into_ui()
         self._detect_clipboard_url()
         self._detect_browsers()
         self._check_external_tools()
         self._load_history()
+        self._refresh_ytdlp_version_label()
 
     # ================= ساخت UI =================
     # ================= تنظیمات =================
@@ -163,6 +176,9 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.subtitle_check.setChecked(bool(self.settings.get("subtitle_enabled", False)))
         self.subtitle_langs.setText(self.settings.get("subtitle_langs", "fa,en"))
         self.subtitle_auto_check.setChecked(bool(self.settings.get("subtitle_auto", False)))
+
+        self.rate_limit_spin.setValue(int(self.settings.get("rate_limit", 0)))
+        self.notify_check.setChecked(bool(self.settings.get("notify_enabled", True)))
 
     # ================= Clipboard =================
     def _detect_clipboard_url(self):
@@ -389,6 +405,13 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             return None, False
         langs = self.subtitle_langs.text().strip() or "all"
         return langs, self.subtitle_auto_check.isChecked()
+
+    def _current_rate_limit(self) -> int:
+        """محدودیت سرعت دانلود به KB/s (۰ = بدون محدودیت)"""
+        try:
+            return int(self.rate_limit_spin.value())
+        except Exception:
+            return 0
 
     def _spawn_thread(self, target, args=()):
         """شروع thread و ردیابی آن برای بستن ایمن"""
@@ -626,11 +649,12 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._spawn_thread(
             self._playlist_download_worker,
             (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
-             proxy, subtitle_langs, subtitle_auto),
+             proxy, subtitle_langs, subtitle_auto, self._current_rate_limit()),
         )
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
-                                  retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto):
+                                  retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto,
+                                  rate_limit=0):
         total = len(videos)
         success = 0
         failed = 0
@@ -654,6 +678,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 proxy=proxy,
                 subtitle_langs=subtitle_langs,
                 subtitle_auto=subtitle_auto,
+                rate_limit=rate_limit,
             )
 
         for i, (row, v) in enumerate(videos, 1):
@@ -696,7 +721,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                         err = str(e2)
                 if not done:
                     failed += 1
-                    self.signals.log.emit(f"[error] خطا در «{title}»: {err}")
+                    self.signals.log.emit(f"[error] خطا در «{title}»: {friendly_error(err)}")
             # توقف کوتاه بین ویدئوها برای جلوگیری از تشخیص ربات (به‌جز آخرین ویدئو)
             if i < total:
                 time.sleep(PLAYLIST_ITEM_DELAY)
@@ -827,6 +852,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             "browser": browser, "cookie_file": cookie_file, "retries": retries,
             "audio_only": audio_only, "audio_fmt": audio_fmt, "proxy": proxy,
             "subtitle_langs": subtitle_langs, "subtitle_auto": subtitle_auto,
+            "rate_limit": self._current_rate_limit(),
         }
 
     def _start_task(self, task: dict):
@@ -922,6 +948,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 proxy=task["proxy"],
                 subtitle_langs=task["subtitle_langs"],
                 subtitle_auto=task["subtitle_auto"],
+                rate_limit=task.get("rate_limit", 0),
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -995,16 +1022,19 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 success, failed = self._playlist_result
                 self._playlist_result = None
                 if failed == 0:
+                    self._notify("دانلود کامل شد", f"{success} ویدئو با موفقیت دانلود شد")
                     QMessageBox.information(
                         self, "موفق",
                         f"دانلود پلی‌لیست کامل شد: {success} ویدئو با موفقیت دانلود شد.",
                     )
                 else:
+                    self._notify("پایان دانلود پلی‌لیست", f"موفق: {success} — ناموفق: {failed}")
                     QMessageBox.warning(
                         self, "پایان دانلود پلی‌لیست",
                         f"دانلود پلی‌لیست پایان یافت:\n✅ موفق: {success}\n❌ ناموفق: {failed}",
                     )
             else:
+                self._notify("دانلود کامل شد", "دانلود با موفقیت به پایان رسید")
                 QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
 
     def _on_error(self, msg: str):
@@ -1020,7 +1050,9 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self._process_queue()
         else:
             self._hide_taskbar_progress()
-            QMessageBox.critical(self, "خطا", msg)
+            friendly = friendly_error(msg)
+            self._notify("خطای دانلود", friendly)
+            QMessageBox.critical(self, "خطا", friendly)
 
     def _append_log(self, msg: str):
         self.log_box.append(msg)
@@ -1085,6 +1117,8 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.settings.set("subtitle_enabled", self.subtitle_check.isChecked())
         self.settings.set("subtitle_langs", self.subtitle_langs.text().strip())
         self.settings.set("subtitle_auto", self.subtitle_auto_check.isChecked())
+        self.settings.set("rate_limit", int(self.rate_limit_spin.value()))
+        self.settings.set("notify_enabled", self.notify_check.isChecked())
 
     # ================= منوی برنامه =================
     def _exit_app(self):
@@ -1108,9 +1142,118 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             "<b>۱) دانلود ویدئو:</b> لینک را وارد کنید → استخراج فرمت‌ها → انتخاب کیفیت → شروع دانلود.<br>"
             "<b>۲) پلی‌لیست:</b> لینک پلی‌لیست → انتخاب ویدئوها → دانلود.<br>"
             "<b>۳) صف دانلود:</b> برای دانلود پشت‌سرهم از «افزودن به صف» استفاده کنید.<br>"
-            "<b>۴) زیرنویس:</b> در بخش ذخیره‌سازی، زیرنویس را فعال کنید.<br><br>"
+            "<b>۴) زیرنویس:</b> در بخش ذخیره‌سازی، زیرنویس را فعال کنید.<br>"
+            "<b>۵) تنظیمات:</b> مسیر ذخیره، محدودیت سرعت، اعلان‌ها و به‌روزرسانی در تب «⚙️ تنظیمات».<br><br>"
             "<b>میان‌برها:</b> Ctrl+Q (خروج)، F1 (راهنما).",
         )
+
+    # ================= اعلان سیستم (Tray) =================
+    def _setup_tray(self):
+        """راه‌اندازی آیکون tray برای اعلان‌های ویندوز"""
+        self.tray = None
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return
+            icon = _app_icon()
+            if icon.isNull():
+                return
+            self.tray = QSystemTrayIcon(icon, self)
+            self.tray.setToolTip("دانلودر یوتیوب")
+            menu = QMenu()
+            act_show = menu.addAction("نمایش پنجره")
+            act_show.triggered.connect(self._restore_window)
+            menu.addSeparator()
+            act_exit = menu.addAction("خروج")
+            act_exit.triggered.connect(self._exit_app)
+            self.tray.setContextMenu(menu)
+            self.tray.activated.connect(self._on_tray_activated)
+            self.tray.show()
+        except Exception:
+            self.tray = None
+
+    def _restore_window(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._restore_window()
+
+    def _notify(self, title: str, message: str):
+        """نمایش اعلان ویندوز (در صورت فعال بودن تنظیمات)"""
+        try:
+            if not self.notify_check.isChecked():
+                return
+            if self.tray is not None:
+                self.tray.showMessage(
+                    title, message, QSystemTrayIcon.MessageIcon.Information, 5000
+                )
+            else:
+                self.statusBar().showMessage(f"{title} — {message}", 5000)
+        except Exception:
+            pass
+
+    # ================= به‌روزرسانی yt-dlp =================
+    def _refresh_ytdlp_version_label(self):
+        try:
+            self.lbl_ytdlp_version.setText(f"نسخهٔ فعلی: {installed_ytdlp_version()}")
+        except Exception:
+            pass
+
+    def _menu_check_update(self):
+        self.tabs.setCurrentIndex(3)  # تب تنظیمات
+        self._check_ytdlp_update()
+
+    def _check_ytdlp_update(self):
+        """بررسی به‌روزرسانی yt-dlp در پس‌زمینه (بدون قفل UI)"""
+        self.lbl_update_status.setText("⏳ در حال بررسی...")
+        self.lbl_update_status.setStyleSheet("color: #a6adc8;")
+        self.btn_check_update.setEnabled(False)
+        self._spawn_thread(self._update_check_worker)
+
+    def _update_check_worker(self):
+        current = installed_ytdlp_version()
+        latest = latest_ytdlp_version() or ""
+        self.signals.update_checked.emit(current, latest)
+
+    def _on_update_checked(self, current: str, latest: str):
+        self.btn_check_update.setEnabled(True)
+        self.lbl_ytdlp_version.setText(f"نسخهٔ فعلی: {current}")
+        if not latest:
+            self.lbl_update_status.setText("❌ بررسی ناموفق — اتصال اینترنت را بررسی کنید")
+            self.lbl_update_status.setStyleSheet("color: #f38ba8;")
+            self._append_log("[warning] بررسی به‌روزرسانی yt-dlp ناموفق بود.")
+            return
+        if is_newer_version(latest, current):
+            self.lbl_update_status.setText(f"⚠️ نسخهٔ جدیدتر موجود است: {latest}")
+            self.lbl_update_status.setStyleSheet("color: #f9e2af;")
+            self._append_log(f"[warning] نسخهٔ جدید yt-dlp موجود است: {current} → {latest}")
+            self._notify("به‌روزرسانی yt-dlp", f"نسخهٔ جدید {latest} موجود است (فعلی: {current})")
+        else:
+            self.lbl_update_status.setText(f"✅ به‌رو است (آخرین نسخه: {latest})")
+            self.lbl_update_status.setStyleSheet("color: #a6e3a1;")
+            self._append_log(f"[info] yt-dlp به‌رو است (نسخه {current}).")
+
+    # ================= ابزارهای نگهداری =================
+    def _open_log_folder(self):
+        try:
+            folder = Path.home() / ".youtube_downloader" / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except Exception as e:
+            QMessageBox.warning(self, "خطا", f"باز کردن پوشهٔ لاگ ناموفق بود:\n{e}")
+
+    def _open_download_folder(self):
+        p = self.path_input.text().strip()
+        if p and Path(p).is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+        else:
+            QMessageBox.warning(self, "خطا", "مسیر ذخیره معتبر نیست.")
+
+    def _clear_log(self):
+        self.log_box.clear()
+        self._append_log("[info] لاگ پاک شد.")
 
     # ================= پیشرفت در تسک‌بار ویندوز =================
     def showEvent(self, event):

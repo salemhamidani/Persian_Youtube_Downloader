@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -27,6 +28,90 @@ def _find_ffmpeg_location() -> Optional[str]:
         if c and os.path.isfile(os.path.join(c, "ffmpeg.exe")):
             return c
     return None
+
+
+# ---------- ترجمه پیام‌های خطای yt-dlp به فارسی ----------
+_FRIENDLY_ERRORS = (
+    (("sign in to confirm", "not a bot", "confirm you're not a bot"),
+     "یوتیوب درخواست شما را «ربات» تشخیص داد. یک‌بار گزینهٔ «کوکی مرورگر» (تازه) را فعال کنید یا از پراکسی/VPN دیگری استفاده کنید."),
+    (("private video", "this video is private"),
+     "این ویدئو خصوصی است و قابل دانلود نیست."),
+    (("video unavailable", "removed by the uploader", "deleted"),
+     "ویدئو در دسترس نیست (حذف شده یا توسط صاحبش محدود شده است)."),
+    (("age-restricted", "age restricted", "sign in to view", "inappropriate"),
+     "این ویدئو محدودیت سنی دارد و برای دانلود باید با حساب کاربری وارد شوید (کوکی)."),
+    (("members-only", "members only", "join this channel"),
+     "این ویدئو فقط برای اعضای کانال قابل دسترسی است."),
+    (("premieres in", "premiere"),
+     "این ویدئو هنوز منتشر نشده است."),
+    (("live event will begin", "this live event"),
+     "پخش زنده هنوز شروع نشده است."),
+    (("requested format is not available", "no video formats found", "no formats found"),
+     "فرمت انتخاب‌شده موجود نیست. لطفاً یک فرمت دیگر (یا «بهترین کیفیت») انتخاب کنید."),
+    (("unable to download webpage", "failed to resolve", "getaddrinfo",
+      "name or service not known", "temporary failure in name resolution", "urlopen error"),
+     "اتصال به یوتیوب برقرار نشد. اتصال اینترنت یا تنظیمات پراکسی را بررسی کنید."),
+    (("http error 403", "403 forbidden"),
+     "دسترسی رد شد (خطای ۴۰۳). یک کوکی مرورگر تازه یا پراکسی دیگر امتحان کنید."),
+    (("http error 429", "too many requests"),
+     "درخواست‌های بیش از حد — کمی صبر کنید و دوباره تلاش کنید."),
+    (("read timed out", "timed out", "connection reset", "connection aborted",
+      "connection refused", "remote end closed"),
+     "اتصال شبکه قطع یا کند شد. لطفاً دوباره تلاش کنید."),
+    (("ffmpeg", "postprocessing", "post-process"),
+     "خطا در پس‌پردازش (FFmpeg). نصب‌بودن FFmpeg را بررسی کنید."),
+    (("unsupported url", "not a valid url"),
+     "این لینک پشتیبانی نمی‌شود. لطفاً یک لینک معتبر یوتیوب وارد کنید."),
+    (("cookies", "cookie file", "failed to decrypt"),
+     "خطا در کوکی‌ها. از کوکی مرورگر تازه استفاده کنید یا مرورگر را ببندید."),
+    (("disk", "no space left", "permission denied", "access is denied"),
+     "خطای دیسک یا دسترسی. فضای آزاد و مسیر ذخیره را بررسی کنید."),
+)
+
+
+def friendly_error(msg: str) -> str:
+    """تبدیل پیام خطای yt-dlp به یک پیام فارسی قابل فهم."""
+    low = (msg or "").lower()
+    for keys, fa in _FRIENDLY_ERRORS:
+        if any(k in low for k in keys):
+            return fa
+    return msg
+
+
+# ---------- بررسی به‌روزرسانی yt-dlp ----------
+def installed_ytdlp_version() -> str:
+    """نسخهٔ فعلی yt-dlp نصب‌شده."""
+    try:
+        import yt_dlp
+        return yt_dlp.version.__version__
+    except Exception:
+        return "?"
+
+
+def latest_ytdlp_version(timeout: int = 8) -> Optional[str]:
+    """آخرین نسخهٔ yt-dlp از PyPI (None در صورت خطای شبکه)."""
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("https://pypi.org/pypi/yt-dlp/json", timeout=timeout) as r:
+            return json.load(r)["info"]["version"]
+    except Exception:
+        return None
+
+
+def version_tuple(v: str) -> tuple:
+    """تبدیل رشتهٔ نسخه به tuple عددی برای مقایسهٔ درست."""
+    try:
+        return tuple(int(x) for x in re.findall(r"\d+", str(v)))
+    except Exception:
+        return ()
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    """آیا نسخهٔ latest از current جدیدتر است؟"""
+    lt, ct = version_tuple(latest), version_tuple(current)
+    return bool(lt and ct and lt > ct)
 
 
 class DownloadCancelled(Exception):
@@ -88,6 +173,7 @@ class YouTubeDownloader:
         quiet: bool = False,
         verbose: bool = False,
         proxy: Optional[str] = None,
+        rate_limit: int = 0,
     ) -> dict:
         """ساخت پارامترهای پایه برای yt-dlp — با تنظیمات سرعت بالا"""
 
@@ -126,6 +212,10 @@ class YouTubeDownloader:
                 }
             },
         }
+
+        # 🐢 محدودیت سرعت دانلود (KB/s → بایت بر ثانیه). ۰ = بدون محدودیت
+        if rate_limit and rate_limit > 0:
+            opts["ratelimit"] = int(rate_limit) * 1024
 
         # ⚡ اگر aria2c نصب بود، از آن به عنوان دانلودر خارجی استفاده کن
         # این سریع‌ترین گزینه است (اختیاری)
@@ -292,10 +382,13 @@ class YouTubeDownloader:
         proxy: Optional[str] = None,
         subtitle_langs: Optional[str] = None,
         subtitle_auto: bool = False,
+        rate_limit: int = 0,
     ):
         """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
         self._reset()
-        opts = self._build_base_opts(cookie_browser, cookie_file, retries, quiet=False, proxy=proxy)
+        opts = self._build_base_opts(
+            cookie_browser, cookie_file, retries, quiet=False, proxy=proxy, rate_limit=rate_limit
+        )
 
         outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")
         opts["outtmpl"] = outtmpl

@@ -44,6 +44,11 @@ class MainWindowUIBuilder:
         self._build_history_tab(history_tab)
         self.tabs.addTab(history_tab, "📜 تاریخچه")
 
+        # ---- تب ۴: تنظیمات ----
+        settings_tab = QWidget()
+        self._build_settings_tab(settings_tab)
+        self.tabs.addTab(settings_tab, "⚙️ تنظیمات")
+
         outer_layout.addWidget(self.tabs, 1)
 
         # ---- نوار پیشرفت (زیر تب‌ها — همیشه نمایان) ----
@@ -74,6 +79,10 @@ class MainWindowUIBuilder:
         act_help.triggered.connect(self._show_help)
         act_about = help_menu.addAction("درباره برنامه")
         act_about.triggered.connect(self._show_about)
+
+        help_menu.addSeparator()
+        act_update = help_menu.addAction("بررسی به‌روزرسانی yt-dlp")
+        act_update.triggered.connect(self._menu_check_update)
 
     # ================= تب دانلود =================
     def _build_download_tab(self, tab):
@@ -113,6 +122,104 @@ class MainWindowUIBuilder:
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.addWidget(self._build_history_group())
+
+    # ================= تب تنظیمات =================
+    def _build_settings_tab(self, tab):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(self._build_storage_group())
+        layout.addWidget(self._build_speed_group())
+        layout.addWidget(self._build_notify_group())
+        layout.addWidget(self._build_update_group())
+        layout.addWidget(self._build_maintenance_group())
+        layout.addStretch(1)
+
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.addWidget(scroll)
+
+    # ================= گروه ذخیره‌سازی (تب تنظیمات) =================
+    def _build_storage_group(self):
+        group = QGroupBox("💾 ذخیره‌سازی")
+        layout = QGridLayout(group)
+
+        layout.addWidget(QLabel("مسیر ذخیره پیش‌فرض:"), 0, 0)
+        self.path_input = QLineEdit()
+        self.path_input.setReadOnly(True)
+        layout.addWidget(self.path_input, 0, 1, 1, 2)
+        self.btn_browse_path = QPushButton("📂 انتخاب پوشه")
+        self.btn_browse_path.clicked.connect(self._browse_output_dir)
+        layout.addWidget(self.btn_browse_path, 0, 3)
+
+        layout.addWidget(QLabel("تعداد تلاش مجدد:"), 1, 0)
+        self.retries_spin = QSpinBox()
+        self.retries_spin.setRange(0, 50)
+        layout.addWidget(self.retries_spin, 1, 1)
+        return group
+
+    # ================= گروه محدودیت سرعت =================
+    def _build_speed_group(self):
+        group = QGroupBox("🐢 محدودیت سرعت دانلود")
+        layout = QHBoxLayout(group)
+        self.rate_limit_spin = QSpinBox()
+        self.rate_limit_spin.setRange(0, 200000)
+        self.rate_limit_spin.setSingleStep(50)
+        self.rate_limit_spin.setSuffix(" KB/s")
+        self.rate_limit_spin.setSpecialValueText("بدون محدودیت")
+        layout.addWidget(self.rate_limit_spin)
+        hint = QLabel("۰ = بدون محدودیت — مثال: ۵۰۰ یعنی حداکثر ۵۰۰ کیلوبایت بر ثانیه")
+        hint.setStyleSheet("color: #a6adc8;")
+        layout.addWidget(hint, 1)
+        return group
+
+    # ================= گروه اعلان‌ها =================
+    def _build_notify_group(self):
+        group = QGroupBox("🔔 اعلان‌ها")
+        layout = QHBoxLayout(group)
+        self.notify_check = QCheckBox("نمایش اعلان ویندوز هنگام پایان یا خطای دانلود")
+        layout.addWidget(self.notify_check)
+        layout.addStretch()
+        return group
+
+    # ================= گروه به‌روزرسانی yt-dlp =================
+    def _build_update_group(self):
+        group = QGroupBox("⬆️ به‌روزرسانی yt-dlp")
+        layout = QHBoxLayout(group)
+        self.lbl_ytdlp_version = QLabel("نسخهٔ فعلی: —")
+        layout.addWidget(self.lbl_ytdlp_version)
+        self.btn_check_update = QPushButton("🔍 بررسی به‌روزرسانی")
+        self.btn_check_update.clicked.connect(self._check_ytdlp_update)
+        layout.addWidget(self.btn_check_update)
+        self.lbl_update_status = QLabel("")
+        layout.addWidget(self.lbl_update_status, 1)
+        return group
+
+    # ================= گروه نگهداری =================
+    def _build_maintenance_group(self):
+        group = QGroupBox("🧰 نگهداری و ابزارها")
+        layout = QHBoxLayout(group)
+
+        self.btn_open_download = QPushButton("📂 پوشهٔ دانلود")
+        self.btn_open_download.clicked.connect(self._open_download_folder)
+        layout.addWidget(self.btn_open_download)
+
+        self.btn_open_log = QPushButton("🗂️ پوشهٔ لاگ")
+        self.btn_open_log.clicked.connect(self._open_log_folder)
+        layout.addWidget(self.btn_open_log)
+
+        self.btn_clear_log2 = QPushButton("🧹 پاک کردن لاگ")
+        self.btn_clear_log2.clicked.connect(self._clear_log)
+        layout.addWidget(self.btn_clear_log2)
+
+        layout.addStretch()
+        return group
 
     # ================= گروه لینک =================
     def _build_link_group(self):
@@ -321,40 +428,31 @@ class MainWindowUIBuilder:
 
     # ================= گروه ذخیره‌سازی و دانلود =================
     def _build_bottom_group(self):
-        group = QGroupBox("۴) ذخیره‌سازی و دانلود")
+        group = QGroupBox("۴) تنظیمات دانلود و شروع")
         layout = QGridLayout(group)
-
-        layout.addWidget(QLabel("مسیر ذخیره:"), 0, 0)
-        self.path_input = QLineEdit()
-        self.path_input.setReadOnly(True)
-        layout.addWidget(self.path_input, 0, 1, 1, 2)
-        self.btn_browse_path = QPushButton("📂 Browse")
-        self.btn_browse_path.clicked.connect(self._browse_output_dir)
-        layout.addWidget(self.btn_browse_path, 0, 3)
-
-        layout.addWidget(QLabel("تعداد تلاش مجدد:"), 1, 0)
-        self.retries_spin = QSpinBox()
-        self.retries_spin.setRange(0, 50)
-        layout.addWidget(self.retries_spin, 1, 1)
 
         self.audio_only_check = QCheckBox("فقط صدا (استخراج با FFmpeg)")
         self.audio_only_check.toggled.connect(self._toggle_audio_only)
-        layout.addWidget(self.audio_only_check, 1, 2)
+        layout.addWidget(self.audio_only_check, 0, 0)
 
         self.audio_format_combo = QComboBox()
         self.audio_format_combo.addItems(["mp3", "m4a", "opus", "flac", "wav"])
         self.audio_format_combo.setEnabled(False)
-        layout.addWidget(self.audio_format_combo, 1, 3)
+        layout.addWidget(self.audio_format_combo, 0, 1)
+
+        hint = QLabel("💡 مسیر ذخیره، تلاش مجدد و محدودیت سرعت در تب «⚙️ تنظیمات»")
+        hint.setStyleSheet("color: #a6adc8;")
+        layout.addWidget(hint, 0, 2, 1, 2)
 
         # زیرنویس
-        layout.addWidget(QLabel("زیرنویس:"), 2, 0)
+        layout.addWidget(QLabel("زیرنویس:"), 1, 0)
         self.subtitle_check = QCheckBox("دانلود")
-        layout.addWidget(self.subtitle_check, 2, 1)
+        layout.addWidget(self.subtitle_check, 1, 1)
         self.subtitle_langs = QLineEdit()
         self.subtitle_langs.setPlaceholderText("زبان‌ها (fa,en یا all)")
-        layout.addWidget(self.subtitle_langs, 2, 2)
+        layout.addWidget(self.subtitle_langs, 1, 2)
         self.subtitle_auto_check = QCheckBox("خودکار")
-        layout.addWidget(self.subtitle_auto_check, 2, 3)
+        layout.addWidget(self.subtitle_auto_check, 1, 3)
 
         btn_layout = QHBoxLayout()
         self.btn_download = QPushButton("⬇️ شروع دانلود")
@@ -380,11 +478,7 @@ class MainWindowUIBuilder:
         self.btn_cancel.clicked.connect(self._cancel_download)
         btn_layout.addWidget(self.btn_cancel, 1)
 
-        self.btn_clear_log = QPushButton("🧹 پاک کردن لاگ")
-        self.btn_clear_log.clicked.connect(lambda: self.log_box.clear())
-        btn_layout.addWidget(self.btn_clear_log, 1)
-
-        layout.addLayout(btn_layout, 3, 0, 1, 4)
+        layout.addLayout(btn_layout, 2, 0, 1, 4)
         return group
 
     # ================= گروه صف دانلود =================

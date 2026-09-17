@@ -5,7 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from downloader import YouTubeDownloader
+from downloader import (
+    YouTubeDownloader,
+    friendly_error,
+    version_tuple,
+    is_newer_version,
+)
 
 
 def _fake_format(**overrides):
@@ -125,6 +130,45 @@ class TestHumanSize(unittest.TestCase):
 
     def test_invalid_input(self):
         self.assertEqual(YouTubeDownloader._human_size("not-a-number"), "?")
+
+
+class TestFriendlyError(unittest.TestCase):
+    def test_bot_detection(self):
+        msg = "ERROR: [youtube] xxx: Sign in to confirm you're not a bot."
+        self.assertIn("ربات", friendly_error(msg))
+
+    def test_private_video(self):
+        self.assertIn("خصوصی", friendly_error("ERROR: This video is private"))
+
+    def test_video_unavailable(self):
+        self.assertIn("در دسترس نیست", friendly_error("ERROR: Video unavailable"))
+
+    def test_unknown_message_passthrough(self):
+        self.assertEqual(friendly_error("some totally unknown error"), "some totally unknown error")
+
+    def test_empty_message(self):
+        self.assertEqual(friendly_error(""), "")
+
+
+class TestVersionCompare(unittest.TestCase):
+    def test_true_when_latest_is_newer(self):
+        self.assertTrue(is_newer_version("2026.10.1", "2026.8.19"))
+
+    def test_false_when_same(self):
+        self.assertFalse(is_newer_version("2026.8.19", "2026.8.19"))
+
+    def test_false_when_older(self):
+        self.assertFalse(is_newer_version("2026.8.19", "2026.10.1"))
+
+    def test_version_tuple(self):
+        self.assertEqual(version_tuple("2026.8.19"), (2026, 8, 19))
+
+    def test_version_tuple_invalid(self):
+        self.assertEqual(version_tuple("?"), ())
+
+    def test_invalid_versions_are_not_newer(self):
+        self.assertFalse(is_newer_version("", "2026.8.19"))
+        self.assertFalse(is_newer_version("2026.8.19", ""))
 
 
 if __name__ == "__main__":

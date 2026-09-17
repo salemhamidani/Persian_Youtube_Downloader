@@ -24,6 +24,8 @@ class SettingsManager:
             "subtitle_enabled": False,
             "subtitle_langs": "fa,en",
             "subtitle_auto": False,
+            "rate_limit": 0,          # محدودیت سرعت به KB/s (۰ = بدون محدودیت)
+            "notify_enabled": True,   # اعلان سیستم هنگام پایان/خطای دانلود
             "history": [],
         }
         self.data = self.load()
