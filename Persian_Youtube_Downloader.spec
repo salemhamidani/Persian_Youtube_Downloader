@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""فایل پیکربندی PyInstaller برای ساخت exe قابل حمل
+"""PyInstaller config for building the portable EXE.
 
-نحوه ساخت:
+Build:
     pyinstaller Persian_Youtube_Downloader.spec
 """
 import shutil
@@ -12,23 +12,25 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# جمع‌آوری کامل پکیج‌ها (شامل داده‌ها، DLL ها و submodule های پنهان)
+# Collect the packages that ship data files / native DLLs / hidden submodules
 for pkg in ["yt_dlp", "curl_cffi", "yt_dlp_plugins"]:
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
 
-# ابزارهای خارجی: ffmpeg، ffprobe و aria2c (در کنار exe قرار می‌گیرند)
+# External tools: ffmpeg, ffprobe and aria2c (placed next to the exe)
+# NOTE: keep every print() ASCII-only - the GitHub Actions Windows runner uses a
+# cp1252 console and crashes on non-encodable characters.
 for tool in ["ffmpeg", "ffprobe", "aria2c"]:
     path = shutil.which(tool)
     if path:
         binaries.append((path, "."))
-        print(f"[spec] باندل کردن {tool}: {path}")
+        print(f"[spec] bundling {tool}: {path}")
     else:
-        print(f"[spec] ⚠️ {tool} یافت نشد — باندل نمی‌شود")
+        print(f"[spec] WARNING: {tool} not found - not bundled")
 
-# آیکون برنامه (برای نمایش در پنجره و آیکون exe)
+# Application icon (window icon + EXE icon)
 datas.append(("assets/icon.png", "assets"))
 datas.append(("assets/icon.ico", "assets"))
 
@@ -60,7 +62,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # برنامه GUI — بدون پنجره کنسول
+    console=False,  # GUI app - no console window
     disable_windowed_traceback=False,
     icon="assets/icon.ico",
 )

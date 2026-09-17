@@ -14,7 +14,7 @@
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.8-red?style=for-the-badge)](https://github.com/yt-dlp/yt-dlp)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=for-the-badge)](https://github.com/salemhamidani/Persian_Youtube_Downloader)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-2088FF?style=for-the-badge&logo=github)](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-2088FF?style=for-the-badge&logo=github)](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases)
 [![Downloads](https://img.shields.io/github/downloads/salemhamidani/Persian_Youtube_Downloader/total?style=for-the-badge&logo=github)](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases)
 
 <br>

@@ -32,6 +32,8 @@ jobs:
 
       - name: Build portable EXE (PyInstaller)
         run: pyinstaller Persian_Youtube_Downloader.spec --noconfirm
+        env:
+          PYTHONIOENCODING: utf-8
 
       - name: Zip the portable folder
         shell: pwsh
