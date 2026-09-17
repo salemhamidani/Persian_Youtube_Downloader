@@ -171,5 +171,22 @@ class TestVersionCompare(unittest.TestCase):
         self.assertFalse(is_newer_version("2026.8.19", ""))
 
 
+class TestAria2cOpts(unittest.TestCase):
+    def test_aria2c_excludes_hls(self):
+        dl = YouTubeDownloader()
+        opts = dl._build_base_opts(use_aria2c=True)
+        ed = opts.get("external_downloader")
+        if ed is not None:  # فقط اگر aria2c نصب باشد
+            self.assertIsInstance(ed, dict)
+            self.assertEqual(ed.get("default"), "aria2c")
+            self.assertEqual(ed.get("m3u8"), "native")  # HLS باید با دانلودر داخلی باشد
+
+    def test_aria2c_disabled(self):
+        dl = YouTubeDownloader()
+        opts = dl._build_base_opts(use_aria2c=False)
+        self.assertNotIn("external_downloader", opts)
+        self.assertNotIn("external_downloader_args", opts)
+
+
 if __name__ == "__main__":
     unittest.main()

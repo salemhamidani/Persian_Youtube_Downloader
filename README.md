@@ -393,7 +393,9 @@ Persian_Youtube_Downloader/
 | مشکل | Problem | راه‌حل |
 |------|---------|--------|
 | «ffmpeg not found» | ffmpeg missing | FFmpeg را نصب کنید (بخش پیش‌نیازها) |
-| دانلود کند | slow download | `aria2c` را نصب کنید تا دانلود موازی فعال شود |
+| «aria2c exited with code 1» | aria2c TLS failure | در تب تنظیمات، تیک «استفاده از aria2c» را بردارید — برنامه خودکار هم به دانلودر داخلی برمی‌گردد |
+| «Sign in to confirm you're not a bot» | YouTube bot check | در تب تنظیمات «استفاده از کوکی مرورگر» (مثل Firefox) را فعال کنید؛ اگر VPN دارید سرور را عوض کنید |
+| دانلود کند | slow download | در تب تنظیمات، «استفاده از aria2c» را فعال کنید (اگر روی سیستم شما بدون خطا کار می‌کند) |
 | خطای کوکی | cookie error | مرورگر را ببندید یا از فایل `cookies.txt` تازه استفاده کنید |
 | فرمت نمایش داده نمی‌شود | formats not shown | از کوکی معتبر استفاده کنید (YouTube محدودیت اعمال می‌کند) |
 | «Did not get any data blocks» در زیرنویس | subtitle PO token error | PO Token Provider را راه‌اندازی کنید (بخش راه‌اندازی PO Token) |

@@ -33,7 +33,10 @@ def _find_ffmpeg_location() -> Optional[str]:
 # ---------- ترجمه پیام‌های خطای yt-dlp به فارسی ----------
 _FRIENDLY_ERRORS = (
     (("sign in to confirm", "not a bot", "confirm you're not a bot"),
-     "یوتیوب درخواست شما را «ربات» تشخیص داد. یک‌بار گزینهٔ «کوکی مرورگر» (تازه) را فعال کنید یا از پراکسی/VPN دیگری استفاده کنید."),
+     "یوتیوب درخواست شما را «ربات» تشخیص داد. راهکارها:\n"
+     "۱) در تب تنظیمات، «استفاده از کوکی مرورگر» (مثلاً Firefox) را فعال کنید — معمولاً بهتر از فایل cookies.txt کار می‌کند.\n"
+     "۲) اگر VPN/پراکسی دارید، سرور را عوض کنید.\n"
+     "۳) کمی صبر کنید و دوباره تلاش کنید."),
     (("private video", "this video is private"),
      "این ویدئو خصوصی است و قابل دانلود نیست."),
     (("video unavailable", "removed by the uploader", "deleted"),
@@ -175,6 +178,7 @@ class YouTubeDownloader:
         proxy: Optional[str] = None,
         rate_limit: int = 0,
         resume: bool = True,
+        use_aria2c: bool = True,
     ) -> dict:
         """ساخت پارامترهای پایه برای yt-dlp — با تنظیمات سرعت بالا"""
 
@@ -221,16 +225,23 @@ class YouTubeDownloader:
         # ▶️ ادامهٔ دانلود ناقص (Resume) — پیش‌فرض yt-dlp روشن است
         opts["continuedl"] = bool(resume)
 
-        # ⚡ اگر aria2c نصب بود، از آن به عنوان دانلودر خارجی استفاده کن
-        # این سریع‌ترین گزینه است (اختیاری)
-        if self._has_aria2c():
-            opts["external_downloader"] = "aria2c"
-            opts["external_downloader_args"] = [
-                "-x", str(self.CONCURRENT_FRAGMENTS),  # تعداد کانکشن
-                "-s", str(self.CONCURRENT_FRAGMENTS),  # تعداد split
-                "-k", "1M",                              # حداقل سایز chunk
-                "--min-split-size=1M",
-            ]
+        # ⚡ دانلودر خارجی aria2c (اختیاری)
+        # نکته مهم: برای فرمت‌های HLS (m3u8) از دانلودر داخلی استفاده می‌کنیم،
+        # چون aria2c روی HLS یوتیوب شکست می‌خورد («aria2c exited with code 1»)
+        if use_aria2c and self._has_aria2c():
+            opts["external_downloader"] = {
+                "default": "aria2c",
+                "m3u8": "native",
+                "m3u8_native": "native",
+            }
+            opts["external_downloader_args"] = {
+                "aria2c": [
+                    "-x", str(self.CONCURRENT_FRAGMENTS),  # تعداد کانکشن
+                    "-s", str(self.CONCURRENT_FRAGMENTS),  # تعداد split
+                    "-k", "1M",                             # حداقل سایز chunk
+                    "--min-split-size=1M",
+                ]
+            }
 
         if verbose:
             opts["verbose"] = True
@@ -388,12 +399,13 @@ class YouTubeDownloader:
         subtitle_auto: bool = False,
         rate_limit: int = 0,
         resume: bool = True,
+        use_aria2c: bool = True,
     ):
         """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
         self._reset()
         opts = self._build_base_opts(
             cookie_browser, cookie_file, retries, quiet=False, proxy=proxy,
-            rate_limit=rate_limit, resume=resume,
+            rate_limit=rate_limit, resume=resume, use_aria2c=use_aria2c,
         )
 
         outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")
@@ -440,15 +452,31 @@ class YouTubeDownloader:
             self._run_download(opts, url)
         except DownloadCancelled:
             raise
-        except Exception:
-            # اگر زیرنویس فعال بود، خطا ممکن است از زیرنویس باشد؛
-            # بدون زیرنویس دوباره تلاش کن تا ویدئو همچنان دانلود شود
+        except Exception as e:
+            err = str(e)
+            retry = False
+
+            # ۱) اگر دانلودر خارجی aria2c شکست خورد، با دانلودر داخلی yt-dlp دوباره تلاش کن
+            if "aria2c" in err.lower() and opts.get("external_downloader"):
+                if log_callback:
+                    log_callback(
+                        "[warning] ⚠️ دانلودر خارجی aria2c شکست خورد — "
+                        "تلاش مجدد با دانلودر داخلی yt-dlp..."
+                    )
+                opts.pop("external_downloader", None)
+                opts.pop("external_downloader_args", None)
+                retry = True
+
+            # ۲) اگر زیرنویس فعال بود، بدون زیرنویس هم تلاش کن تا ویدئو همچنان دانلود شود
             if subtitle_langs or subtitle_auto:
                 if log_callback:
-                    log_callback("[warning] دانلود زیرنویس ناموفق بود — ویدئو بدون زیرنویس دانلود می‌شود.")
-                self._reset()
+                    log_callback("[warning] تلاش مجدد بدون زیرنویس...")
                 for k in ("writesubtitles", "writeautomaticsub", "subtitleslangs", "subtitlesformat"):
                     opts.pop(k, None)
+                retry = True
+
+            if retry:
+                self._reset()
                 self._run_download(opts, url)
             else:
                 raise

@@ -25,6 +25,7 @@ class SettingsManager:
             "subtitle_langs": "fa,en",
             "subtitle_auto": False,
             "rate_limit": 0,          # محدودیت سرعت به KB/s (۰ = بدون محدودیت)
+            "use_aria2c": False,      # دانلودر خارجی aria2c (در برخی سیستم‌ها خطای SSL می‌دهد)
             "resume_enabled": True,   # ادامهٔ دانلود ناقص از همان‌جا
             "notify_enabled": True,   # اعلان سیستم هنگام پایان/خطای دانلود
             "history": [],

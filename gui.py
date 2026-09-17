@@ -180,6 +180,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.subtitle_auto_check.setChecked(bool(self.settings.get("subtitle_auto", False)))
 
         self.rate_limit_spin.setValue(int(self.settings.get("rate_limit", 0)))
+        self.aria2c_check.setChecked(bool(self.settings.get("use_aria2c", False)))
         self.resume_check.setChecked(bool(self.settings.get("resume_enabled", True)))
         self.notify_check.setChecked(bool(self.settings.get("notify_enabled", True)))
 
@@ -497,6 +498,13 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         except Exception:
             return 0
 
+    def _current_use_aria2c(self) -> bool:
+        """آیا از دانلودر خارجی aria2c استفاده شود؟"""
+        try:
+            return bool(self.aria2c_check.isChecked())
+        except Exception:
+            return True
+
     def _spawn_thread(self, target, args=()):
         """شروع thread و ردیابی آن برای بستن ایمن"""
         self._workers = [t for t in self._workers if t.is_alive()]
@@ -757,12 +765,12 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self._playlist_download_worker,
             (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
              proxy, subtitle_langs, subtitle_auto, self._current_rate_limit(),
-             self.resume_check.isChecked()),
+             self.resume_check.isChecked(), self._current_use_aria2c()),
         )
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
                                   retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto,
-                                  rate_limit=0, resume=True):
+                                  rate_limit=0, resume=True, use_aria2c=True):
         total = len(videos)
         success = 0
         failed = 0
@@ -788,6 +796,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 subtitle_auto=subtitle_auto,
                 rate_limit=rate_limit,
                 resume=resume,
+                use_aria2c=use_aria2c,
             )
 
         for i, (row, v) in enumerate(videos, 1):
@@ -963,6 +972,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             "subtitle_langs": subtitle_langs, "subtitle_auto": subtitle_auto,
             "rate_limit": self._current_rate_limit(),
             "resume": self.resume_check.isChecked(),
+            "use_aria2c": self._current_use_aria2c(),
         }
 
     def _start_task(self, task: dict):
@@ -1056,6 +1066,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             "subtitle_auto": False,
             "rate_limit": self._current_rate_limit(),
             "resume": self.resume_check.isChecked(),
+            "use_aria2c": self._current_use_aria2c(),
         }
 
     def _process_queue(self):
@@ -1106,6 +1117,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 subtitle_auto=task["subtitle_auto"],
                 rate_limit=task.get("rate_limit", 0),
                 resume=task.get("resume", True),
+                use_aria2c=task.get("use_aria2c", True),
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -1166,17 +1178,26 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.btn_cancel.setEnabled(False)
         self.btn_fetch.setEnabled(True)
         self.btn_pl_download.setEnabled(bool(self.playlist_items))
-        self._set_status("✅ دانلود با موفقیت انجام شد.")
-        self._append_log("[info] دانلود با موفقیت به پایان رسید.")
         self._record_history()
+
+        pr = self._playlist_result
+        if pr is not None and pr[1] > 0:
+            self._set_status(f"⚠️ پایان دانلود — {pr[1]} مورد ناموفق")
+            self._append_log(
+                f"[warning] دانلود پایان یافت — ✅ {pr[0]} موفق، ❌ {pr[1]} ناموفق."
+            )
+        else:
+            self._set_status("✅ دانلود با موفقیت انجام شد.")
+            self._append_log("[info] دانلود با موفقیت به پایان رسید.")
+
         if self.queue:
             # موردهای بیشتری در صف است — بدون دیالوگ ادامه بده
             self._process_queue()
         else:
             self._set_taskbar_value(100)
             self._hide_taskbar_progress()
-            if self._playlist_result is not None:
-                success, failed = self._playlist_result
+            if pr is not None:
+                success, failed = pr
                 self._playlist_result = None
                 if failed == 0:
                     self._notify("دانلود کامل شد", f"{success} ویدئو با موفقیت دانلود شد")
@@ -1275,6 +1296,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.settings.set("subtitle_langs", self.subtitle_langs.text().strip())
         self.settings.set("subtitle_auto", self.subtitle_auto_check.isChecked())
         self.settings.set("rate_limit", int(self.rate_limit_spin.value()))
+        self.settings.set("use_aria2c", self.aria2c_check.isChecked())
         self.settings.set("resume_enabled", self.resume_check.isChecked())
         self.settings.set("notify_enabled", self.notify_check.isChecked())
 

@@ -169,17 +169,27 @@ class MainWindowUIBuilder:
 
     # ================= گروه محدودیت سرعت =================
     def _build_speed_group(self):
-        group = QGroupBox("🐢 محدودیت سرعت دانلود")
-        layout = QHBoxLayout(group)
+        group = QGroupBox("⚡ سرعت دانلود")
+        layout = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("محدودیت سرعت:"))
         self.rate_limit_spin = QSpinBox()
         self.rate_limit_spin.setRange(0, 200000)
         self.rate_limit_spin.setSingleStep(50)
         self.rate_limit_spin.setSuffix(" KB/s")
         self.rate_limit_spin.setSpecialValueText("بدون محدودیت")
-        layout.addWidget(self.rate_limit_spin)
+        row.addWidget(self.rate_limit_spin)
         hint = QLabel("۰ = بدون محدودیت — مثال: ۵۰۰ یعنی حداکثر ۵۰۰ کیلوبایت بر ثانیه")
         hint.setStyleSheet("color: #a6adc8;")
-        layout.addWidget(hint, 1)
+        row.addWidget(hint, 1)
+        layout.addLayout(row)
+
+        self.aria2c_check = QCheckBox(
+            "استفاده از دانلودر خارجی aria2c (دانلود موازی سریع‌تر — "
+            "فرمت‌های HLS همیشه با دانلودر داخلی دانلود می‌شوند)"
+        )
+        layout.addWidget(self.aria2c_check)
         return group
 
     # ================= گروه اعلان‌ها =================
@@ -272,6 +282,13 @@ class MainWindowUIBuilder:
         self.btn_browse_cookie = QPushButton("📂 Browse")
         self.btn_browse_cookie.clicked.connect(self._browse_cookie_file)
         layout.addWidget(self.btn_browse_cookie, 1, 3)
+
+        hint = QLabel(
+            "💡 برای دانلودهای یوتیوب، «کوکی مرورگر» (مخصوصاً Firefox) معمولاً از فایل cookies.txt بهتر کار می‌کند."
+        )
+        hint.setStyleSheet("color: #a6adc8;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint, 2, 0, 1, 4)
         return group
 
     # ================= گروه پراکسی =================
