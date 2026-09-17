@@ -1,8 +1,47 @@
 """توابع و ثابت‌های کمکی رابط کاربری (مستقل از MainWindow)"""
 import re
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTableWidgetItem
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import (
+    QApplication,
+    QStyle,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
+    QTableWidgetItem,
+)
+
+
+# نقش سفارشی برای علامت‌گذاری ویدئوهای دانلودشده در پلی‌لیست
+DONE_ROLE = Qt.ItemDataRole.UserRole + 100
+
+
+class GreenCheckDelegate(QStyledItemDelegate):
+    """delegate برای نمایش تیک سبز ویدئوهای دانلودشده در جدول پلی‌لیست"""
+
+    def paint(self, painter, option, index):
+        if index.data(DONE_ROLE) == "done":
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            style = option.widget.style() if option.widget else QApplication.style()
+            style.drawPrimitive(
+                QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, option.widget
+            )
+            # رسم دستی تیک سبز
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#4caf50"))
+            pen.setWidthF(2.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            cx = option.rect.center().x()
+            cy = option.rect.center().y()
+            painter.drawLine(QPointF(cx - 5.0, cy), QPointF(cx - 1.5, cy + 3.5))
+            painter.drawLine(QPointF(cx - 1.5, cy + 3.5), QPointF(cx + 6.0, cy - 4.5))
+            painter.restore()
+            return
+        super().paint(painter, option, index)
 
 
 YOUTUBE_URL_RE = re.compile(
@@ -167,4 +206,23 @@ QScrollBar::handle:horizontal {
     min-width: 24px;
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+QMenuBar {
+    background-color: #181825;
+    color: #cdd6f4;
+    border-bottom: 1px solid #313244;
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+QMenuBar::item:selected { background-color: #313244; }
+QMenu {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    border: 1px solid #313244;
+}
+QMenu::item { padding: 6px 24px; }
+QMenu::item:selected { background-color: #313244; }
+QMenu::separator { height: 1px; background: #313244; margin: 4px 8px; }
 """

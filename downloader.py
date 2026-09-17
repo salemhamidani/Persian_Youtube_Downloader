@@ -119,9 +119,10 @@ class YouTubeDownloader:
 
             # ⚡ استفاده از کلاینت‌های web برای سازگاری با کوکی‌ها
             # default: زیرنویس را درست دانلود می‌کند، web_safari: ویدئوی باکیفیت (HLS)
+            # web_creator: فرمت‌های DASH کامل (فقط-ویدئو/فقط-صدا) — دور زدن آزمایش SABR یوتیوب
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["default", "web_safari"],
+                    "player_client": ["default", "web_safari", "web_creator"],
                 }
             },
         }
@@ -389,6 +390,8 @@ class YouTubeDownloader:
             abr = f.get("abr", "")
             vbr = f.get("vbr", "")
             tbr = f.get("tbr", "")
+            abr_num = float(abr) if isinstance(abr, (int, float)) else 0.0
+            tbr_num = float(tbr) if isinstance(tbr, (int, float)) else 0.0
 
             filesize = f.get("filesize") or f.get("filesize_approx")
             if not filesize and tbr and duration:
@@ -437,6 +440,8 @@ class YouTubeDownloader:
                 "filesize": filesize or 0,
                 "language": lang_display,
                 "language_raw": language,
+                "abr_num": abr_num,
+                "tbr_num": tbr_num,
             })
 
         order = {"video+audio": 0, "video": 1, "audio": 2, "other": 3}
@@ -444,6 +449,19 @@ class YouTubeDownloader:
             order.get(x["kind"], 9),
             -x["size_bytes"],
         ))
+
+        # بهترین فرمت صدا برای ترکیب با فرمت‌های فقط-ویدئو (ستون «آیدی صدا»)
+        best_audio_id = ""
+        best_audio_br = -1.0
+        for f in formats:
+            if f["kind"] == "audio":
+                br = f["abr_num"] or f["tbr_num"] or 0.0
+                if br > best_audio_br:
+                    best_audio_br = br
+                    best_audio_id = f["id"]
+        for f in formats:
+            f["audio_id"] = best_audio_id if f["kind"] == "video" else ""
+
         return formats
 
     @staticmethod

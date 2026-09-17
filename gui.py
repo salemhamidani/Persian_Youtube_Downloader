@@ -1,11 +1,13 @@
 import sys
 import threading
+import time
 import logging
 from logging.handlers import RotatingFileHandler
 import pyperclip
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
+from PyQt6.QtGui import QIcon, QBrush, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget,
@@ -18,6 +20,25 @@ from PyQt6.QtWidgets import (
 from downloader import YouTubeDownloader, DownloadCancelled
 from cookies import CookieManager
 from settings import SettingsManager
+from version import __version__
+
+
+def _app_icon() -> QIcon:
+    """ساخت آیکون برنامه (از assets/icon.png؛ در حالت exe هم جستجو می‌کند)"""
+    import os
+
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(exe_dir, "assets", "icon.png"))
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(os.path.join(sys._MEIPASS, "assets", "icon.png"))
+    candidates.append(str(Path(__file__).resolve().parent / "assets" / "icon.png"))
+
+    for c in candidates:
+        if os.path.isfile(c):
+            return QIcon(c)
+    return QIcon()
 
 
 def _setup_file_logging():
@@ -35,12 +56,28 @@ def _setup_file_logging():
     logger.propagate = False
 
 
+# توقف کوتاه بین ویدئوهای پلی‌لیست (ثانیه) برای جلوگیری از تشخیص ربات یوتیوب
+PLAYLIST_ITEM_DELAY = 3.0
+
+
+def _is_bot_block_error(msg: str) -> bool:
+    """تشخیص خطای «Sign in to confirm you're not a bot» یوتیوب"""
+    m = (msg or "").lower()
+    return (
+        "sign in to confirm" in m
+        or "not a bot" in m
+        or "please sign in" in m
+        or "confirm you're not a bot" in m
+    )
+
+
 class WorkerSignals(QObject):
     log = pyqtSignal(str)
     progress = pyqtSignal(dict)
     formats_ready = pyqtSignal(dict)
     playlist_ready = pyqtSignal(dict)
     playlist_size = pyqtSignal(dict)
+    playlist_item_done = pyqtSignal(int)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -53,6 +90,7 @@ from ui_utils import (
     QUALITY_HEIGHT,
     NumericTableWidgetItem,
     DARK_QSS,
+    DONE_ROLE,
 )
 from ui_builder import MainWindowUIBuilder
 
@@ -61,6 +99,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("دانلودر یوتیوب — yt-dlp GUI")
+        self.setWindowIcon(_app_icon())
         self.resize(1250, 900)
         self.setMinimumSize(900, 600)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -75,6 +114,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.signals.formats_ready.connect(self._on_formats_ready)
         self.signals.playlist_ready.connect(self._on_playlist_ready)
         self.signals.playlist_size.connect(self._on_playlist_size)
+        self.signals.playlist_item_done.connect(self._on_playlist_item_done)
         self.signals.finished.connect(self._on_finished)
         self.signals.error.connect(self._on_error)
         self.signals.status.connect(self._set_status)
@@ -89,6 +129,11 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._download_meta = None
         self.playlist_title = ""
         self.queue = []
+        self._playlist_result = None
+
+        # تسک‌بار ویندوز (ITaskbarList3) — مقداردهی اولیه
+        self._taskbar_progress = None
+        self._taskbar_initialized = False
 
         self._build_ui()
         self._load_settings_into_ui()
@@ -508,12 +553,37 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             if item:
                 item.setCheckState(Qt.CheckState.Unchecked)
 
+    def _on_playlist_item_done(self, row: int):
+        """علامت‌گذاری ویدئوی دانلودشده با تیک سبز"""
+        if 0 <= row < self.playlist_table.rowCount():
+            item = self.playlist_table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setData(DONE_ROLE, "done")
+                self.playlist_table.viewport().update()
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        """حذف کاراکترهای غیرمجاز ویندوز از نام پوشه/فایل"""
+        import re
+
+        name = re.sub(r'[<>:"/\\|?*]', "_", (name or "").strip())
+        name = name.strip().rstrip(".").strip()
+        return name or "playlist"
+
+    def _playlist_output_dir(self, base_dir: str) -> str:
+        """ساخت (و بازگرداندن) زیرپوشه‌ای به نام پلی‌لیست"""
+        name = self._sanitize_filename(self.playlist_title)
+        d = Path(base_dir) / name
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
+
     def _start_playlist_download(self):
-        selected = []
+        selected = []  # لیست (شماره‌ردیف, ویدئو) برای علامت‌گذاری تیک سبز
         for r in range(self.playlist_table.rowCount()):
             chk = self.playlist_table.item(r, 0)
             if chk and chk.checkState() == Qt.CheckState.Checked and r < len(self.playlist_items):
-                selected.append(self.playlist_items[r])
+                selected.append((r, self.playlist_items[r]))
 
         if not selected:
             QMessageBox.information(self, "توجه", "ابتدا ویدئو(های) موردنظر را از لیست انتخاب کنید.")
@@ -523,6 +593,10 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         if not output_dir or not Path(output_dir).is_dir():
             QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است.")
             return
+
+        # ویدئوهای پلی‌لیست در زیرپوشه‌ای به نام خود پلی‌لیست ذخیره می‌شوند
+        output_dir = self._playlist_output_dir(output_dir)
+        self._append_log(f"[info] 📁 پوشه ذخیره پلی‌لیست: {output_dir}")
 
         fmt = self._resolve_playlist_format()
         audio_only = self.audio_only_check.isChecked()
@@ -545,6 +619,8 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.btn_fetch.setEnabled(False)
         self.btn_pl_download.setEnabled(False)
         self.progress_bar.setValue(0)
+        self._show_taskbar_progress()
+        self._set_taskbar_value(0)
         self._set_status(f"در حال دانلود {len(selected)} ویدئو از پلی‌لیست...")
 
         self._spawn_thread(
@@ -556,39 +632,76 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
                                   retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto):
         total = len(videos)
-        for i, v in enumerate(videos, 1):
+        success = 0
+        failed = 0
+
+        def _dl_one(v):
+            """دانلود یک ویدئو از پلی‌لیست"""
+            self.downloader.download(
+                url=v["url"],
+                output_dir=output_dir,
+                format_selector=fmt,
+                cookie_browser=browser,
+                cookie_file=cookie_file,
+                retries=retries,
+                audio_only=audio_only,
+                audio_format=audio_fmt,
+                progress_callback=lambda d: self.signals.progress.emit(d),
+                log_callback=lambda m: self.signals.log.emit(m),
+                postprocessor_callback=lambda p: self.signals.status.emit(
+                    f"پس‌پردازش: {p}"
+                ),
+                proxy=proxy,
+                subtitle_langs=subtitle_langs,
+                subtitle_auto=subtitle_auto,
+            )
+
+        for i, (row, v) in enumerate(videos, 1):
             if self.downloader.cancel_flag.is_set():
                 self.signals.error.emit("دانلود پلی‌لیست توسط کاربر لغو شد.")
                 return
             title = v.get("title", "?")
             self.signals.log.emit(f"[info] ⏬ ({i}/{total}) در حال دانلود: {title}")
             self.signals.status.emit(f"دانلود ویدئوی {i} از {total}")
+            done = False
             try:
-                self.downloader.download(
-                    url=v["url"],
-                    output_dir=output_dir,
-                    format_selector=fmt,
-                    cookie_browser=browser,
-                    cookie_file=cookie_file,
-                    retries=retries,
-                    audio_only=audio_only,
-                    audio_format=audio_fmt,
-                    progress_callback=lambda d: self.signals.progress.emit(d),
-                    log_callback=lambda m: self.signals.log.emit(m),
-                    postprocessor_callback=lambda p: self.signals.status.emit(
-                        f"پس‌پردازش: {p}"
-                    ),
-                    proxy=proxy,
-                    subtitle_langs=subtitle_langs,
-                    subtitle_auto=subtitle_auto,
-                )
+                _dl_one(v)
+                success += 1
+                done = True
+                self.signals.playlist_item_done.emit(row)
                 self.signals.log.emit(f"[info] ✅ ({i}/{total}) تمام شد: {title}")
             except DownloadCancelled:
                 self.signals.error.emit("دانلود توسط کاربر لغو شد.")
                 return
             except Exception as e:
-                self.signals.log.emit(f"[error] خطا در «{title}»: {e}")
-                # ادامه با ویدئوی بعدی
+                err = str(e)
+                # اگر خطای تشخیص ربات یوتیوب بود، توقف کوتاه و یک‌بار تلاش مجدد
+                if _is_bot_block_error(err):
+                    self.signals.log.emit(
+                        f"[warning] ⚠️ تشخیص ربات یوتیوب — توقف کوتاه و تلاش مجدد: {title}"
+                    )
+                    time.sleep(PLAYLIST_ITEM_DELAY * 2)
+                    try:
+                        _dl_one(v)
+                        success += 1
+                        done = True
+                        self.signals.playlist_item_done.emit(row)
+                        self.signals.log.emit(
+                            f"[info] ✅ ({i}/{total}) تمام شد (تلاش دوم): {title}"
+                        )
+                    except DownloadCancelled:
+                        self.signals.error.emit("دانلود توسط کاربر لغو شد.")
+                        return
+                    except Exception as e2:
+                        err = str(e2)
+                if not done:
+                    failed += 1
+                    self.signals.log.emit(f"[error] خطا در «{title}»: {err}")
+            # توقف کوتاه بین ویدئوها برای جلوگیری از تشخیص ربات (به‌جز آخرین ویدئو)
+            if i < total:
+                time.sleep(PLAYLIST_ITEM_DELAY)
+
+        self._playlist_result = (success, failed)
         self.signals.finished.emit()
 
     def _apply_filter(self):
@@ -638,6 +751,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         for row, f in enumerate(formats):
             values = [
                 f["id"],
+                f.get("audio_id", ""),
                 f["resolution"],
                 str(f["fps"]),
                 f.get("language", ""),
@@ -649,7 +763,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 f["ext"],
             ]
             for col, val in enumerate(values):
-                if col == 7:  # ستون سایز — مرتب‌سازی عددی
+                if col == 8:  # ستون سایز — مرتب‌سازی عددی
                     item = NumericTableWidgetItem(str(val))
                     item.setData(Qt.ItemDataRole.UserRole, f.get("size_bytes", 0))
                 else:
@@ -657,9 +771,13 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 if f["kind"] == "video":
-                    item.setForeground(Qt.GlobalColor.darkBlue)
+                    item.setForeground(QBrush(QColor("#89b4fa")))
                 elif f["kind"] == "audio":
-                    item.setForeground(Qt.GlobalColor.darkGreen)
+                    item.setForeground(QBrush(QColor("#a6e3a1")))
+
+                # ستون «آیدی صدا» — رنگ زرد متمایز برای دیده‌شدن واضح
+                if col == 1 and val:
+                    item.setForeground(QBrush(QColor("#f9e2af")))
 
                 self.table.setItem(row, col, item)
 
@@ -719,6 +837,8 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.btn_cancel.setEnabled(True)
         self.btn_fetch.setEnabled(False)
         self.progress_bar.setValue(0)
+        self._show_taskbar_progress()
+        self._set_taskbar_value(0)
         self._set_status(f"در حال دانلود: {task['title']}...")
         self._spawn_thread(self._download_worker, (task,))
 
@@ -814,6 +934,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             self.downloader.cancel()
             self._append_log("[warning] درخواست لغو دانلود ارسال شد...")
             self.btn_cancel.setEnabled(False)
+            self._hide_taskbar_progress()
             # لغو کامل: صف را هم خالی کن
             if self.queue:
                 self.queue.clear()
@@ -829,6 +950,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             if total > 0:
                 pct = int(downloaded * 100 / total)
                 self.progress_bar.setValue(pct)
+                self._set_taskbar_value(pct)
             speed = d.get("speed")
             eta = d.get("eta")
             if speed:
@@ -867,7 +989,23 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             # موردهای بیشتری در صف است — بدون دیالوگ ادامه بده
             self._process_queue()
         else:
-            QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
+            self._set_taskbar_value(100)
+            self._hide_taskbar_progress()
+            if self._playlist_result is not None:
+                success, failed = self._playlist_result
+                self._playlist_result = None
+                if failed == 0:
+                    QMessageBox.information(
+                        self, "موفق",
+                        f"دانلود پلی‌لیست کامل شد: {success} ویدئو با موفقیت دانلود شد.",
+                    )
+                else:
+                    QMessageBox.warning(
+                        self, "پایان دانلود پلی‌لیست",
+                        f"دانلود پلی‌لیست پایان یافت:\n✅ موفق: {success}\n❌ ناموفق: {failed}",
+                    )
+            else:
+                QMessageBox.information(self, "موفق", "دانلود با موفقیت به پایان رسید.")
 
     def _on_error(self, msg: str):
         self.is_downloading = False
@@ -881,6 +1019,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             # ادامه صف با وجود خطا (خطا لاگ شده است)
             self._process_queue()
         else:
+            self._hide_taskbar_progress()
             QMessageBox.critical(self, "خطا", msg)
 
     def _append_log(self, msg: str):
@@ -947,6 +1086,66 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.settings.set("subtitle_langs", self.subtitle_langs.text().strip())
         self.settings.set("subtitle_auto", self.subtitle_auto_check.isChecked())
 
+    # ================= منوی برنامه =================
+    def _exit_app(self):
+        """خروج از برنامه (از منو) — از closeEvent برای تأیید دانلود فعال استفاده می‌کند"""
+        self.close()
+
+    def _show_about(self):
+        QMessageBox.about(
+            self,
+            "درباره برنامه",
+            f"<h3>دانلودر یوتیوب — نسخه {__version__}</h3>"
+            "<p>اپلیکیشن دسکتاپ دانلود ویدئو و صوت از یوتیوب.</p>"
+            "<p><b>تکنولوژی:</b> Python + PyQt6 + yt-dlp</p>"
+            "<p>رابط کاربری فارسی (راست‌به‌چپ)</p>",
+        )
+
+    def _show_help(self):
+        QMessageBox.information(
+            self,
+            "راهنمای استفاده",
+            "<b>۱) دانلود ویدئو:</b> لینک را وارد کنید → استخراج فرمت‌ها → انتخاب کیفیت → شروع دانلود.<br>"
+            "<b>۲) پلی‌لیست:</b> لینک پلی‌لیست → انتخاب ویدئوها → دانلود.<br>"
+            "<b>۳) صف دانلود:</b> برای دانلود پشت‌سرهم از «افزودن به صف» استفاده کنید.<br>"
+            "<b>۴) زیرنویس:</b> در بخش ذخیره‌سازی، زیرنویس را فعال کنید.<br><br>"
+            "<b>میان‌برها:</b> Ctrl+Q (خروج)، F1 (راهنما).",
+        )
+
+    # ================= پیشرفت در تسک‌بار ویندوز =================
+    def showEvent(self, event):
+        """راه‌اندازی QWinTaskbarProgress پس از نمایش پنجره (که windowHandle معتبر می‌شود)"""
+        super().showEvent(event)
+        self._setup_taskbar()
+
+    def _setup_taskbar(self):
+        """ایجاد TaskbarProgress (ITaskbarList3) پس از نمایش پنجره (فقط ویندوز و فقط یک بار)"""
+        if self._taskbar_initialized:
+            return
+        self._taskbar_initialized = True
+        if sys.platform != "win32":
+            return
+        try:
+            from taskbar import TaskbarProgress
+
+            hwnd = int(self.winId())
+            self._taskbar_progress = TaskbarProgress(hwnd)
+        except Exception:
+            # ساخت ITaskbarList3 شکست خورد — بی‌صدا رد شو
+            self._taskbar_progress = None
+
+    def _show_taskbar_progress(self):
+        if self._taskbar_progress is not None:
+            self._taskbar_progress.show()
+
+    def _hide_taskbar_progress(self):
+        if self._taskbar_progress is not None:
+            self._taskbar_progress.hide()
+
+    def _set_taskbar_value(self, value: int):
+        if self._taskbar_progress is not None:
+            self._taskbar_progress.set_value(max(0, min(100, int(value))), 100)
+
     def closeEvent(self, event):
         if self.is_downloading:
             ret = QMessageBox.question(
@@ -971,6 +1170,7 @@ def run_app():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(DARK_QSS)
+    app.setWindowIcon(_app_icon())
     win = MainWindow()
-    win.show()
+    win.showMaximized()
     sys.exit(app.exec())

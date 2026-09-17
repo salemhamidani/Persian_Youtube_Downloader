@@ -67,6 +67,23 @@ class TestParseFormats(unittest.TestCase):
         )
         self.assertEqual(result[0]["language"], "فارسی")
 
+    def test_audio_id_for_video_only(self):
+        info = self._info([
+            _fake_format(format_id="137", acodec="none", height=1080, filesize_approx=300_000_000),
+            _fake_format(format_id="140", vcodec="none", abr=128.0, tbr=128.0, filesize_approx=16_000_000),
+            _fake_format(format_id="251", vcodec="none", abr=160.0, tbr=160.0, filesize_approx=20_000_000),
+        ])
+        result = YouTubeDownloader.parse_formats(info)
+        video = next(f for f in result if f["id"] == "137")
+        # بهترین فرمت صدا از نظر bitrate = 251 (160k)
+        self.assertEqual(video["audio_id"], "251")
+        # خود فرمت صدا آیدی صدا ندارد
+        audio = next(f for f in result if f["id"] == "251")
+        self.assertEqual(audio["audio_id"], "")
+        # فرمت ترکیبی (ویدئو+صدا) هم آیدی صدا ندارد
+        combined = next(f for f in result if f["id"] == "140")
+        self.assertEqual(combined["kind"], "audio")
+
 
 class TestEstimateSize(unittest.TestCase):
     def _info(self, formats, duration=1000):

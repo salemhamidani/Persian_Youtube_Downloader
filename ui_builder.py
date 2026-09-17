@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
 )
 
-from ui_utils import QUALITY_OPTIONS
+from ui_utils import QUALITY_OPTIONS, GreenCheckDelegate
 
 
 class MainWindowUIBuilder:
@@ -21,6 +21,7 @@ class MainWindowUIBuilder:
 
     # ================= ساختار اصلی =================
     def _build_ui(self):
+        self._build_menu_bar()
         central = QWidget()
         outer_layout = QVBoxLayout(central)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -55,6 +56,24 @@ class MainWindowUIBuilder:
         self.statusBar().showMessage("آماده")
 
         self._append_log("[info] برنامه راه‌اندازی شد.")
+
+    # ================= منوی برنامه =================
+    def _build_menu_bar(self):
+        menubar = self.menuBar()
+
+        # --- منوی فایل ---
+        file_menu = menubar.addMenu("فایل")
+        act_exit = file_menu.addAction("خروج")
+        act_exit.setShortcut("Ctrl+Q")
+        act_exit.triggered.connect(self._exit_app)
+
+        # --- منوی راهنما ---
+        help_menu = menubar.addMenu("راهنما")
+        act_help = help_menu.addAction("راهنمای استفاده")
+        act_help.setShortcut("F1")
+        act_help.triggered.connect(self._show_help)
+        act_about = help_menu.addAction("درباره برنامه")
+        act_about.triggered.connect(self._show_about)
 
     # ================= تب دانلود =================
     def _build_download_tab(self, tab):
@@ -193,9 +212,9 @@ class MainWindowUIBuilder:
 
         layout.addLayout(filter_layout)
 
-        self.table = QTableWidget(0, 10)
+        self.table = QTableWidget(0, 11)
         self.table.setHorizontalHeaderLabels([
-            "ID", "کیفیت", "FPS", "زبان",
+            "ID", "آیدی صدا", "کیفیت", "FPS", "زبان",
             "کدک ویدئو", "کدک صدا", "بیت‌ریت صدا",
             "سایز", "نوع", "کانتینر"
         ])
@@ -210,7 +229,7 @@ class MainWindowUIBuilder:
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        for i, w in enumerate([70, 130, 55, 100, 130, 130, 90, 110, 110, 80]):
+        for i, w in enumerate([70, 80, 130, 55, 100, 130, 130, 90, 110, 110, 80]):
             self.table.setColumnWidth(i, w)
 
         self.table.setMinimumHeight(320)
@@ -274,6 +293,8 @@ class MainWindowUIBuilder:
         self.playlist_table.setColumnWidth(4, 90)
         self.playlist_table.setColumnWidth(5, 150)
         self.playlist_table.setMinimumHeight(260)
+        # delegate برای نمایش تیک سبز ویدئوهای دانلودشده
+        self.playlist_table.setItemDelegateForColumn(0, GreenCheckDelegate(self.playlist_table))
         layout.addWidget(self.playlist_table)
 
         pl_btn_layout = QHBoxLayout()

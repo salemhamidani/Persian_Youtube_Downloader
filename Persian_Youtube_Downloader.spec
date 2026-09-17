@@ -28,6 +28,10 @@ for tool in ["ffmpeg", "ffprobe", "aria2c"]:
     else:
         print(f"[spec] ⚠️ {tool} یافت نشد — باندل نمی‌شود")
 
+# آیکون برنامه (برای نمایش در پنجره و آیکون exe)
+datas.append(("assets/icon.png", "assets"))
+datas.append(("assets/icon.ico", "assets"))
+
 a = Analysis(
     ["main.py"],
     pathex=[],
@@ -58,7 +62,7 @@ exe = EXE(
     upx=False,
     console=False,  # برنامه GUI — بدون پنجره کنسول
     disable_windowed_traceback=False,
-    icon=None,
+    icon="assets/icon.ico",
 )
 
 coll = COLLECT(
