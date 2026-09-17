@@ -7,7 +7,7 @@ import pyperclip
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QBrush, QColor, QDesktopServices
+from PyQt6.QtGui import QIcon, QBrush, QColor, QDesktopServices, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget,
@@ -87,6 +87,7 @@ class WorkerSignals(QObject):
     playlist_size = pyqtSignal(dict)
     playlist_item_done = pyqtSignal(int)
     update_checked = pyqtSignal(str, str)
+    thumbnail_ready = pyqtSignal(object)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -125,6 +126,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.signals.playlist_size.connect(self._on_playlist_size)
         self.signals.playlist_item_done.connect(self._on_playlist_item_done)
         self.signals.update_checked.connect(self._on_update_checked)
+        self.signals.thumbnail_ready.connect(self._on_thumbnail_ready)
         self.signals.finished.connect(self._on_finished)
         self.signals.error.connect(self._on_error)
         self.signals.status.connect(self._set_status)
@@ -178,6 +180,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.subtitle_auto_check.setChecked(bool(self.settings.get("subtitle_auto", False)))
 
         self.rate_limit_spin.setValue(int(self.settings.get("rate_limit", 0)))
+        self.resume_check.setChecked(bool(self.settings.get("resume_enabled", True)))
         self.notify_check.setChecked(bool(self.settings.get("notify_enabled", True)))
 
     # ================= Clipboard =================
@@ -381,6 +384,87 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             f"سایر: {kinds['other']}"
         )
 
+        self._show_video_info(info)
+
+    # ================= اطلاعات ویدئو (thumbnail + آمار) =================
+    @staticmethod
+    def _esc(text) -> str:
+        """فرار دادن کاراکترهای HTML"""
+        return (
+            str(text or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @staticmethod
+    def _fmt_count(n) -> str:
+        """قالب‌بندی عدد (بازدید/لایک) با جداکنندهٔ هزارگان"""
+        try:
+            return f"{int(n):,}"
+        except (TypeError, ValueError):
+            return "—"
+
+    def _show_video_info(self, info: dict):
+        """نمایش اطلاعات ویدئو + بارگذاری تصویر بندانگشتی در پس‌زمینه"""
+        title = info.get("title") or "?"
+        uploader = info.get("uploader") or info.get("channel") or "?"
+        duration = info.get("duration")
+        try:
+            dur_str = self._fmt_time(int(duration)) if duration else "?"
+        except (TypeError, ValueError):
+            dur_str = "?"
+
+        parts = [
+            f"<b>🎬 {self._esc(title)}</b>",
+            f"👤 کانال: {self._esc(uploader)}",
+            f"⏱️ مدت: {dur_str}",
+            f"👁️ بازدید: {self._fmt_count(info.get('view_count'))} "
+            f"&nbsp;|&nbsp; 👍 لایک: {self._fmt_count(info.get('like_count'))}",
+        ]
+        self.lbl_video_info.setText("<br>".join(parts))
+
+        thumb = info.get("thumbnail")
+        if thumb:
+            self.thumb_label.setPixmap(QPixmap())
+            self.thumb_label.setText("⏳ در حال بارگذاری تصویر...")
+            self._spawn_thread(self._thumbnail_worker, (thumb,))
+        else:
+            self.thumb_label.setPixmap(QPixmap())
+            self.thumb_label.setText("(تصویر بندانگشتی موجود نیست)")
+
+    def _thumbnail_worker(self, url: str):
+        """دانلود تصویر بندانگشتی در پس‌زمینه"""
+        data = b""
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = r.read()
+        except Exception:
+            data = b""
+        self.signals.thumbnail_ready.emit(data)
+
+    def _on_thumbnail_ready(self, data):
+        """نمایش تصویر بندانگشتی دانلودشده"""
+        if not data:
+            self.thumb_label.setText("(بارگذاری تصویر ناموفق)")
+            return
+        pix = QPixmap()
+        if not pix.loadFromData(data):
+            self.thumb_label.setText("(تصویر نامعتبر)")
+            return
+        self.thumb_label.setText("")
+        self.thumb_label.setPixmap(
+            pix.scaled(
+                self.thumb_label.width(),
+                self.thumb_label.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
     # ================= پلی‌لیست =================
     def _current_cookie(self):
         """بازگرداندن منبع کوکی فعلی بر اساس UI"""
@@ -479,6 +563,13 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             f"🎵 {info.get('title', 'پلی‌لیست')} — {count} ویدئو"
         )
         self._fill_playlist_table(self.playlist_items)
+        # پاک‌کردن جستجو و نمایش همهٔ ردیف‌ها برای پلی‌لیست جدید
+        if hasattr(self, "playlist_search"):
+            self.playlist_search.blockSignals(True)
+            self.playlist_search.clear()
+            self.playlist_search.blockSignals(False)
+        for r in range(self.playlist_table.rowCount()):
+            self.playlist_table.setRowHidden(r, False)
         self.tabs.setCurrentIndex(1)  # تب پلی‌لیست
         self.btn_fetch.setEnabled(True)
         self.btn_pl_download.setEnabled(True)
@@ -563,6 +654,22 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
 
             self.playlist_table.setItem(row, 4, QTableWidgetItem("…"))  # حجم (در حال محاسبه)
             self.playlist_table.setItem(row, 5, QTableWidgetItem(str(v.get("uploader", ""))))
+
+    def _filter_playlist(self, text: str = ""):
+        """فیلتر ردیف‌های جدول پلی‌لیست بر اساس عنوان یا مدت"""
+        q = (text or "").strip().lower()
+        for r in range(self.playlist_table.rowCount()):
+            if r >= len(self.playlist_items):
+                continue
+            item = self.playlist_items[r]
+            title = str(item.get("title", "")).lower()
+            dur = item.get("duration")
+            try:
+                dur_str = self._fmt_time(int(dur)) if dur else ""
+            except (TypeError, ValueError):
+                dur_str = ""
+            match = (not q) or (q in title) or (q in dur_str)
+            self.playlist_table.setRowHidden(r, not match)
 
     def _playlist_select_all(self):
         for r in range(self.playlist_table.rowCount()):
@@ -649,12 +756,13 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._spawn_thread(
             self._playlist_download_worker,
             (selected, output_dir, fmt, browser, cookie_file, retries, audio_only, audio_fmt,
-             proxy, subtitle_langs, subtitle_auto, self._current_rate_limit()),
+             proxy, subtitle_langs, subtitle_auto, self._current_rate_limit(),
+             self.resume_check.isChecked()),
         )
 
     def _playlist_download_worker(self, videos, output_dir, fmt, browser, cookie_file,
                                   retries, audio_only, audio_fmt, proxy, subtitle_langs, subtitle_auto,
-                                  rate_limit=0):
+                                  rate_limit=0, resume=True):
         total = len(videos)
         success = 0
         failed = 0
@@ -679,6 +787,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 subtitle_langs=subtitle_langs,
                 subtitle_auto=subtitle_auto,
                 rate_limit=rate_limit,
+                resume=resume,
             )
 
         for i, (row, v) in enumerate(videos, 1):
@@ -853,6 +962,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
             "audio_only": audio_only, "audio_fmt": audio_fmt, "proxy": proxy,
             "subtitle_langs": subtitle_langs, "subtitle_auto": subtitle_auto,
             "rate_limit": self._current_rate_limit(),
+            "resume": self.resume_check.isChecked(),
         }
 
     def _start_task(self, task: dict):
@@ -902,6 +1012,52 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self._append_log(f"[info] ➕ به صف اضافه شد: {task['title']} ({len(self.queue)} مورد)")
         self._process_queue()
 
+    # ================= دانلود دسته‌ای (چند لینک) =================
+    def _batch_add_to_queue(self):
+        """افزودن چند لینک (هر خط یکی) به صف دانلود"""
+        raw = self.batch_input.toPlainText()
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        urls = [l for l in lines if YOUTUBE_URL_RE.match(l)]
+        if not urls:
+            QMessageBox.information(
+                self, "توجه",
+                "لینک معتبری پیدا نشد.\nهر لینک یوتیوب را در یک خط جدا وارد کنید.",
+            )
+            return
+
+        output_dir = self.path_input.text().strip()
+        if not output_dir or not Path(output_dir).is_dir():
+            QMessageBox.warning(self, "خطا", "مسیر ذخیره نامعتبر است (تب «⚙️ تنظیمات»).")
+            return
+
+        for u in urls:
+            self.queue.append(self._build_batch_task(u))
+        self._refresh_queue_ui()
+        self.batch_input.clear()
+        self._append_log(f"[info] ➕ {len(urls)} لینک به صف اضافه شد ({len(self.queue)} مورد در صف).")
+        self._process_queue()
+
+    def _build_batch_task(self, url: str) -> dict:
+        """ساخت تسک برای یک لینک در حالت دانلود دسته‌ای (بدون استخراج اولیه)"""
+        audio_only = self.audio_only_check.isChecked()
+        browser, cookie_file = self._current_cookie()
+        return {
+            "title": url,
+            "url": url,
+            "output_dir": self.path_input.text().strip(),
+            "fmt": "bestaudio/best" if audio_only else "bestvideo+bestaudio/best",
+            "browser": browser,
+            "cookie_file": cookie_file,
+            "retries": int(self.retries_spin.value()),
+            "audio_only": audio_only,
+            "audio_fmt": self.audio_format_combo.currentText(),
+            "proxy": self._current_proxy(),
+            "subtitle_langs": None,
+            "subtitle_auto": False,
+            "rate_limit": self._current_rate_limit(),
+            "resume": self.resume_check.isChecked(),
+        }
+
     def _process_queue(self):
         """پردازش صف: اگر بیکار و صف خالی نبود، مورد بعدی را شروع کن"""
         if self.is_downloading or not self.queue:
@@ -949,6 +1105,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
                 subtitle_langs=task["subtitle_langs"],
                 subtitle_auto=task["subtitle_auto"],
                 rate_limit=task.get("rate_limit", 0),
+                resume=task.get("resume", True),
             )
             self.signals.finished.emit()
         except DownloadCancelled:
@@ -1118,6 +1275,7 @@ class MainWindow(MainWindowUIBuilder, QMainWindow):
         self.settings.set("subtitle_langs", self.subtitle_langs.text().strip())
         self.settings.set("subtitle_auto", self.subtitle_auto_check.isChecked())
         self.settings.set("rate_limit", int(self.rate_limit_spin.value()))
+        self.settings.set("resume_enabled", self.resume_check.isChecked())
         self.settings.set("notify_enabled", self.notify_check.isChecked())
 
     # ================= منوی برنامه =================

@@ -174,6 +174,7 @@ class YouTubeDownloader:
         verbose: bool = False,
         proxy: Optional[str] = None,
         rate_limit: int = 0,
+        resume: bool = True,
     ) -> dict:
         """ساخت پارامترهای پایه برای yt-dlp — با تنظیمات سرعت بالا"""
 
@@ -216,6 +217,9 @@ class YouTubeDownloader:
         # 🐢 محدودیت سرعت دانلود (KB/s → بایت بر ثانیه). ۰ = بدون محدودیت
         if rate_limit and rate_limit > 0:
             opts["ratelimit"] = int(rate_limit) * 1024
+
+        # ▶️ ادامهٔ دانلود ناقص (Resume) — پیش‌فرض yt-dlp روشن است
+        opts["continuedl"] = bool(resume)
 
         # ⚡ اگر aria2c نصب بود، از آن به عنوان دانلودر خارجی استفاده کن
         # این سریع‌ترین گزینه است (اختیاری)
@@ -383,11 +387,13 @@ class YouTubeDownloader:
         subtitle_langs: Optional[str] = None,
         subtitle_auto: bool = False,
         rate_limit: int = 0,
+        resume: bool = True,
     ):
         """دانلود ویدئو/صدا با فرمت انتخاب‌شده — با حداکثر سرعت"""
         self._reset()
         opts = self._build_base_opts(
-            cookie_browser, cookie_file, retries, quiet=False, proxy=proxy, rate_limit=rate_limit
+            cookie_browser, cookie_file, retries, quiet=False, proxy=proxy,
+            rate_limit=rate_limit, resume=resume,
         )
 
         outtmpl = str(Path(output_dir) / "%(title)s [%(id)s].%(ext)s")

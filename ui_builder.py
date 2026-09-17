@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QProgressBar, QTextEdit, QGroupBox, QHeaderView, QCheckBox,
     QSpinBox, QStatusBar, QAbstractItemView, QRadioButton,
     QButtonGroup, QScrollArea, QFrame, QSizePolicy, QTabWidget,
-    QListWidget,
+    QListWidget, QPlainTextEdit,
 )
 
 from ui_utils import QUALITY_OPTIONS, GreenCheckDelegate
@@ -99,9 +99,9 @@ class MainWindowUIBuilder:
         layout.setSpacing(10)
 
         layout.addWidget(self._build_link_group())
-        layout.addWidget(self._build_cookie_group())
-        layout.addWidget(self._build_proxy_group())
+        layout.addWidget(self._build_video_info_group())
         layout.addWidget(self._build_format_group())
+        layout.addWidget(self._build_batch_group())
         layout.addWidget(self._build_bottom_group())
         layout.addWidget(self._build_queue_group())
         layout.addStretch(1)
@@ -135,7 +135,10 @@ class MainWindowUIBuilder:
         layout.setSpacing(10)
 
         layout.addWidget(self._build_storage_group())
+        layout.addWidget(self._build_cookie_group())
+        layout.addWidget(self._build_proxy_group())
         layout.addWidget(self._build_speed_group())
+        layout.addWidget(self._build_resume_group())
         layout.addWidget(self._build_notify_group())
         layout.addWidget(self._build_update_group())
         layout.addWidget(self._build_maintenance_group())
@@ -292,9 +295,64 @@ class MainWindowUIBuilder:
         layout.addWidget(self.proxy_port)
         return group
 
+    # ================= گروه اطلاعات ویدئو (thumbnail) =================
+    def _build_video_info_group(self):
+        group = QGroupBox("📺 اطلاعات ویدئو")
+        layout = QHBoxLayout(group)
+
+        self.thumb_label = QLabel("پس از استخراج، تصویر بندانگشتی اینجا نمایش داده می‌شود")
+        self.thumb_label.setFixedSize(240, 135)
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.thumb_label.setWordWrap(True)
+        self.thumb_label.setStyleSheet(
+            "background-color: #11111b; border: 1px solid #313244; "
+            "border-radius: 6px; color: #6c7086;"
+        )
+        layout.addWidget(self.thumb_label)
+
+        self.lbl_video_info = QLabel("برای دیدن اطلاعات ویدئو، «استخراج فرمت‌ها» را بزنید.")
+        self.lbl_video_info.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
+        )
+        self.lbl_video_info.setWordWrap(True)
+        self.lbl_video_info.setStyleSheet("color: #cdd6f4;")
+        layout.addWidget(self.lbl_video_info, 1)
+        return group
+
+    # ================= گروه دانلود دسته‌ای =================
+    def _build_batch_group(self):
+        group = QGroupBox("۳) دانلود دسته‌ای (چند لینک)")
+        layout = QVBoxLayout(group)
+        layout.addWidget(QLabel("چند لینک را، هر کدام در یک خط، بچسبانید (همه به صف اضافه می‌شوند):"))
+        self.batch_input = QPlainTextEdit()
+        self.batch_input.setPlaceholderText(
+            "https://youtu.be/aaaaaaaaaaa\nhttps://youtu.be/bbbbbbbbbbb"
+        )
+        self.batch_input.setMaximumHeight(90)
+        layout.addWidget(self.batch_input)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.btn_batch_add = QPushButton("➕ افزودن همه به صف")
+        self.btn_batch_add.clicked.connect(self._batch_add_to_queue)
+        btn_layout.addWidget(self.btn_batch_add)
+        layout.addLayout(btn_layout)
+        return group
+
+    # ================= گروه ادامهٔ دانلود (Resume) =================
+    def _build_resume_group(self):
+        group = QGroupBox("▶️ ادامهٔ دانلود")
+        layout = QHBoxLayout(group)
+        self.resume_check = QCheckBox(
+            "ادامهٔ فایل‌های ناقص (Resume) — در صورت قطع‌شدن، از همان‌جا ادامه بده"
+        )
+        layout.addWidget(self.resume_check)
+        layout.addStretch()
+        return group
+
     # ================= گروه فرمت‌ها =================
     def _build_format_group(self):
-        group = QGroupBox("۳) فرمت‌های موجود")
+        group = QGroupBox("۲) فرمت‌های موجود")
         layout = QVBoxLayout(group)
 
         filter_layout = QHBoxLayout()
@@ -377,7 +435,12 @@ class MainWindowUIBuilder:
             self.playlist_quality_combo.addItem(label, selector)
         self.playlist_quality_combo.currentIndexChanged.connect(self._refresh_playlist_sizes)
         q_layout.addWidget(self.playlist_quality_combo)
-        q_layout.addStretch()
+
+        q_layout.addWidget(QLabel("🔍 جستجو:"))
+        self.playlist_search = QLineEdit()
+        self.playlist_search.setPlaceholderText("جستجو در عنوان یا مدت (مثلاً 10:30)...")
+        self.playlist_search.textChanged.connect(self._filter_playlist)
+        q_layout.addWidget(self.playlist_search, 1)
         layout.addLayout(q_layout)
 
         self.playlist_table = QTableWidget(0, 6)
