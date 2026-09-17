@@ -14,6 +14,8 @@
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2026.8-red?style=for-the-badge)](https://github.com/yt-dlp/yt-dlp)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=for-the-badge)](https://github.com/salemhamidani/Persian_Youtube_Downloader)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-2088FF?style=for-the-badge&logo=github)](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases)
+[![Downloads](https://img.shields.io/github/downloads/salemhamidani/Persian_Youtube_Downloader/total?style=for-the-badge&logo=github)](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases)
 
 <br>
 
@@ -22,6 +24,22 @@
 | دانلود ویدئو و صوت از یوتیوب با رابط کاربری گرافیکی | Download YouTube video & audio with a GUI |
 
 </div>
+
+---
+
+## 📥 دانلود | Download
+
+> 🚀 **آخرین نسخه:** `v1.0.0`
+
+| پلتفرم | فایل | لینک |
+|--------|------|------|
+| 🪟 **Windows x64** | `Persian_Youtube_Downloader-v1.0.0-windows-x64.zip` (~۵۶MB) | [⬇️ دانلود](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases/download/v1.0.0/Persian_Youtube_Downloader-v1.0.0-windows-x64.zip) |
+
+**فارسی:** نسخه قابل حمل ویندوز را دانلود و استخراج کنید، سپس `Persian_Youtube_Downloader.exe` را اجرا کنید — بدون نیاز به نصب پایتون یا هیچ وابستگی دیگر.
+
+**English:** Download the portable Windows build, extract it, and run `Persian_Youtube_Downloader.exe` — no Python or any dependency required.
+
+> 📦 همه نسخه‌ها در صفحه [Releases](https://github.com/salemhamidani/Persian_Youtube_Downloader/releases) موجود است.
 
 ---
 
@@ -53,6 +71,15 @@
 | 📜 **تاریخچه دانلود** | Download history | ثبت خودکار دانلودهای انجام‌شده + پاک‌کردن |
 | 🌐 **پشتیبانی پراکسی** | Proxy support | پروکسی `http` / `socks5` / `socks4` / `https` |
 | 🖱️ **رابط راست‌به‌چپ** | RTL interface | کاملاً فارسی با چیدمان راست‌به‌چپ |
+| 📑 **تب‌بندی** | Tabs | تب‌های «دانلود ویدئو»، «پلی‌لیست» و «تاریخچه» |
+| 🌙 **تم تیره** | Dark theme | استایل مدرن QSS با رنگ‌های نئونی |
+| 📋 **منوی برنامه** | Menu bar | فایل (خروج `Ctrl+Q`) + راهنما (`F1` و درباره) |
+| ⏳ **صف دانلود** | Download queue | دانلود چند ویدئو پشت‌سرهم + مدیریت صف |
+| 🎯 **ستون آیدی صدا** | Audio ID column | نمایش بهترین فرمت صدا برای ترکیب آسان با فرمت ویدئو |
+| ✅ **تیک سبز** | Green checkmark | علامت سبز برای ویدئوهای دانلودشده در پلی‌لیست |
+| 📁 **پوشه پلی‌لیست** | Playlist folder | ذخیره ویدئوهای هر پلی‌لیست در پوشه‌ای به نام همان پلی‌لیست |
+| 🪟 **پیشرفت تسک‌بار** | Taskbar progress | نمایش درصد دانلود روی آیکون تسک‌بار ویندوز |
+| 🛡️ **دور زدن SABR** | SABR workaround | بازیابی فرمت‌های کامل DASH با کلاینت `web_creator` |
 
 ---
 
@@ -226,6 +253,28 @@ python -c "import shutil; shutil.make_archive('Persian_Youtube_Downloader', 'zip
 1. فایل ZIP را منتقل و استخراج کنید.
 2. `Persian_Youtube_Downloader.exe` را اجرا کنید.
 
+### 📤 انتشار در گیتهاب (GitHub Release)
+
+برای انتشار نسخه در گیتهاب (با شماره نسخه و ریلیس‌های مختلف):
+
+**روش خودکار (توصیه‌شده):** کافی است یک تگ نسخه push کنید — ورکفلو `.github/workflows/release.yml` به‌صورت خودکار exe را می‌سازد و Release می‌کند:
+
+```bash
+# شماره نسخه را در version.py بالا ببرید، سپس:
+git add -A && git commit -m "نسخه 1.1.0" && git push
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+**روش دستی:** وقتی exe را خودتان ساخته‌اید:
+
+```bash
+# ZIP بسازید
+python -c "import shutil; shutil.make_archive('Persian_Youtube_Downloader-v1.1.0-windows-x64', 'zip', 'dist/Persian_Youtube_Downloader')"
+
+# Release بسازید
+gh release create v1.1.0 "Persian_Youtube_Downloader-v1.1.0-windows-x64.zip" --title "v1.1.0" --generate-notes
+```
+
 ---
 
 ## 🎯 نحوه استفاده | Usage
@@ -263,12 +312,19 @@ python -c "import shutil; shutil.make_archive('Persian_Youtube_Downloader', 'zip
 ```
 Persian_Youtube_Downloader/
 ├── main.py           → نقطه ورود برنامه (entry point)
-├── gui.py            → رابط کاربری گرافیکی (PyQt6)
-├── ui_utils.py       → ثابت‌ها و توابع کمکی UI (regex، کیفیت‌ها)
+├── gui.py            → رابط کاربری گرافیکی (PyQt6) + منو + تسک‌بار
+├── ui_builder.py     → ساخت ویجت‌های UI (میکسین)
+├── ui_utils.py       → ثابت‌ها و توابع کمکی UI (تم تیره، delegate تیک سبز)
 ├── downloader.py     → منطق دانلود، زیرنویس و استخراج فرمت‌ها (yt-dlp)
+├── taskbar.py        → پیشرفت تسک‌بار ویندوز (ITaskbarList3)
 ├── cookies.py        → شناسایی مرورگرها و مدیریت فایل کوکی
 ├── settings.py       → ذخیره/بازیابی تنظیمات و تاریخچه (JSON)
+├── version.py        → شماره نسخه برنامه
+├── make_icon.py      → تولید آیکون برنامه
+├── assets/           → آیکون‌های برنامه (png/ico)
 ├── tests/            → تست‌های unit
+├── .github/workflows/ → ورکفلو خودکار Build & Release
+├── Persian_Youtube_Downloader.spec → پیکربندی PyInstaller
 ├── requirements.txt  → وابستگی‌های پروژه (شامل PO Token)
 ├── README.md         → مستند پروژه (فارسی/انگلیسی)
 ├── LICENSE           → مجوز MIT
@@ -280,12 +336,15 @@ Persian_Youtube_Downloader/
 | فایل | File | مسئولیت |
 |------|------|---------|
 | `main.py` | entry point | اجرای برنامه |
-| `gui.py` | UI (PyQt6) | پنجره اصلی، جدول فرمت‌ها، پلی‌لیست، تاریخچه |
-| `ui_utils.py` | UI helpers | ثابت‌ها، regex لینک، گزینه‌های کیفیت، آیتم عددی |
+| `gui.py` | UI (PyQt6) | پنجره اصلی، جدول فرمت‌ها، پلی‌لیست، تاریخچه، منو، تسک‌بار |
+| `ui_builder.py` | UI builder | ساخت ویجت‌ها (تب‌ها، جدول‌ها، دکمه‌ها) به‌صورت میکسین |
+| `ui_utils.py` | UI helpers | ثابت‌ها، regex لینک، گزینه‌های کیفیت، تم تیره، delegate تیک سبز |
 | `downloader.py` | download engine | ساخت پارامترهای yt-dlp، دانلود، زیرنویس، پارس فرمت‌ها |
+| `taskbar.py` | taskbar progress | پیشرفت روی آیکون تسک‌بار ویندوز (ITaskbarList3) |
 | `cookies.py` | cookie manager | تشخیص مرورگر، اعتبارسنجی کوکی |
 | `settings.py` | settings | ذخیره تنظیمات و تاریخچه در `~/.youtube_downloader/config.json` |
-| `tests/` | unit tests | تست‌های دانلودر، تنظیمات، کوکی و توابع UI |
+| `version.py` | version | شماره نسخه برنامه |
+| `tests/` | unit tests | تست‌های دانلودر، تنظیمات، کوکی، تسک‌بار و توابع UI |
 
 ---
 
